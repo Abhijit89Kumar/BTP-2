@@ -201,6 +201,9 @@ class PyTorchMonteCarlo:
         import time as _time
         t0 = _time.perf_counter()
         result = fn(L, Z, mu, p, c, s, Q)
+        # Clone immediately — torch.compile with max-autotune uses CUDA
+        # graphs whose output buffers are overwritten on subsequent runs.
+        result = result.clone()
 
         if device.type == "cuda":
             end_event.record()
