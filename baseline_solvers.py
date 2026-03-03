@@ -179,18 +179,21 @@ class PyTorchMonteCarlo:
         if self.use_compile:
             fn = self._compiled_fn
 
-        # Warm-up (torch.compile JIT's on first call)
-        if device.type == "cuda":
-            _ = fn(L, Z, mu, p, c, s, Q)
-            torch.cuda.synchronize()
-
-        # Clear cached blocks so the timed run's allocations (including
-        # the D=[N,S] intermediate) show up as fresh peaks, giving an
-        # accurate comparison against the Triton kernel which never
-        # allocates D.
+        # Warm-up run (torch.compile JIT compiles on first call).
+        # We measure peak memory HERE because torch.compile with
+        # max-autotune uses CUDA graphs.  During graph *replay* (the
+        # timed run), no new allocations occur — the graph reuses pre-
+        # allocated buffers — so max_memory_allocated would miss the
+        # D[N,S] intermediate.  The warmup is a real execution that
+        # performs all allocations, so its peak reflects true memory.
         if device.type == "cuda":
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device)
+            _ = fn(L, Z, mu, p, c, s, Q)
+            torch.cuda.synchronize()
+            peak_mem = torch.cuda.max_memory_allocated(device)
+        else:
+            peak_mem = 0
 
         # Timed run
         if device.type == "cuda":
@@ -209,7 +212,6 @@ class PyTorchMonteCarlo:
             end_event.record()
             torch.cuda.synchronize()
             wall_ms = start_event.elapsed_time(end_event)
-            peak_mem = torch.cuda.max_memory_allocated(device)
         else:
             wall_ms = (_time.perf_counter() - t0) * 1e3
             peak_mem = 0

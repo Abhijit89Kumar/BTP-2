@@ -231,14 +231,11 @@ def _fused_newsvendor_kernel(
         #          ↑ shape [BLOCK_SIZE_K, BLOCK_SIZE_N], lives in SRAM
 
         # ── Accumulate dot product in SRAM ────────────────────────────
-        # MIXED PRECISION:  Cast tiles to FP16 before tl.dot so that
-        # GPUs with FP16 tensor cores (T4 Turing: 65 TFLOPS FP16 vs
-        # 8.1 TFLOPS FP32) can use them.  The accumulator `acc` stays
-        # in FP32, so all downstream business logic retains full
-        # single-precision accuracy.  This is identical to what
-        # torch.set_float32_matmul_precision('high') does, but we
-        # also get the fusion benefit on top.
-        acc += tl.dot(L_tile.to(tl.float16), Z_tile.to(tl.float16))
+        # ── Accumulate dot product in SRAM ────────────────────────────
+        # tl.dot computes a matrix multiply of two tiles, both in SRAM.
+        # Result is accumulated into `acc` (also SRAM / registers).
+        # NO HBM traffic occurs here — this is the critical optimisation.
+        acc += tl.dot(L_tile, Z_tile)
 
     # ══════════════════════════════════════════════════════════════════════
     # 2.  PHASE 2 — Fused Newsvendor business logic (all in SRAM).
@@ -386,6 +383,10 @@ class TritonFusedNewsvendor:
         )
 
         # ── Warm-up (triggers autotune on first call; cached after) ──
+        # Measure peak memory during warmup (same as PyTorch solver).
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device)
+
         _fused_newsvendor_kernel[grid](
             L, Z, mu, p, c, s, Q, out,
             N, S, K,
@@ -393,11 +394,10 @@ class TritonFusedNewsvendor:
             Z.stride(0), Z.stride(1),
         )
         torch.cuda.synchronize()
+        peak_mem = torch.cuda.max_memory_allocated(device)
 
         # ── Timed launch ─────────────────────────────────────────────
         out.zero_()
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats(device)
 
         start_event = torch.cuda.Event(enable_timing=True)
         end_event   = torch.cuda.Event(enable_timing=True)
@@ -415,8 +415,7 @@ class TritonFusedNewsvendor:
         end_event.record()
         torch.cuda.synchronize()
 
-        wall_ms  = start_event.elapsed_time(end_event)
-        peak_mem = torch.cuda.max_memory_allocated(device)
+        wall_ms = start_event.elapsed_time(end_event)
 
         return SolverResult(
             expected_profit=out,
