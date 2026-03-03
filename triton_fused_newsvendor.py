@@ -383,7 +383,16 @@ class TritonFusedNewsvendor:
         )
 
         # ── Warm-up (triggers autotune on first call; cached after) ──
-        # Measure peak memory during warmup (same as PyTorch solver).
+        _fused_newsvendor_kernel[grid](
+            L, Z, mu, p, c, s, Q, out,
+            N, S, K,
+            L.stride(0), L.stride(1),
+            Z.stride(0), Z.stride(1),
+        )
+        torch.cuda.synchronize()
+
+        # ── Memory measurement (autotune already cached — no overhead) ──
+        out.zero_()
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
 

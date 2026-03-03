@@ -170,22 +170,26 @@ class PyTorchMonteCarlo:
         s  = bundle.s.contiguous()
         Q  = bundle.Q.contiguous()
 
-        # Optionally compile
+        # Optionally compile.
+        # NOTE: We intentionally use the *default* compile mode (not
+        # "max-autotune") because max-autotune captures CUDA graphs
+        # whose private memory pool is invisible to max_memory_allocated,
+        # making memory comparison vs Triton meaningless.  Default mode
+        # still applies Inductor fusion + Triton codegen for pointwise
+        # ops but keeps standard allocation paths.
         fn = self._newsvendor_forward
         if self.use_compile and self._compiled_fn is None:
-            self._compiled_fn = torch.compile(
-                fn, mode="max-autotune", backend="inductor"
-            )
+            self._compiled_fn = torch.compile(fn, backend="inductor")
         if self.use_compile:
             fn = self._compiled_fn
 
-        # Warm-up run (torch.compile JIT compiles on first call).
-        # We measure peak memory HERE because torch.compile with
-        # max-autotune uses CUDA graphs.  During graph *replay* (the
-        # timed run), no new allocations occur — the graph reuses pre-
-        # allocated buffers — so max_memory_allocated would miss the
-        # D[N,S] intermediate.  The warmup is a real execution that
-        # performs all allocations, so its peak reflects true memory.
+        # Warm-up (torch.compile JIT compiles on first call)
+        if device.type == "cuda":
+            _ = fn(L, Z, mu, p, c, s, Q)
+            torch.cuda.synchronize()
+
+        # Measure peak memory on a dedicated run after clearing the cache
+        # so that intermediates (especially D[N,S]) register as fresh peaks.
         if device.type == "cuda":
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device)
@@ -204,9 +208,6 @@ class PyTorchMonteCarlo:
         import time as _time
         t0 = _time.perf_counter()
         result = fn(L, Z, mu, p, c, s, Q)
-        # Clone immediately — torch.compile with max-autotune uses CUDA
-        # graphs whose output buffers are overwritten on subsequent runs.
-        result = result.clone()
 
         if device.type == "cuda":
             end_event.record()
