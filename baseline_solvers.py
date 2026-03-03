@@ -61,30 +61,37 @@ class CPUMonteCarlo:
         3. Profit:            π = p·X − c·Q + s·max(Q−D, 0)
         4. Expected profit:   E[π] = mean(π, axis=1)  [N]
         """
-        # Move everything to CPU NumPy
-        L  = bundle.L.cpu().numpy().astype(np.float64)
-        Z  = bundle.Z.cpu().numpy().astype(np.float64)
-        mu = bundle.mu.cpu().numpy().astype(np.float64)   # [N,1]
-        p  = bundle.p.cpu().numpy().astype(np.float64)
-        c  = bundle.c.cpu().numpy().astype(np.float64)
-        s  = bundle.s.cpu().numpy().astype(np.float64)
-        Q  = bundle.Q.cpu().numpy().astype(np.float64)
+        # Move everything to CPU NumPy (stay in float32 to fit in RAM)
+        L  = bundle.L.cpu().numpy()
+        Z  = bundle.Z.cpu().numpy()
+        mu = bundle.mu.cpu().numpy()    # [N,1]
+        p  = bundle.p.cpu().numpy()
+        c  = bundle.c.cpu().numpy()
+        s  = bundle.s.cpu().numpy()
+        Q  = bundle.Q.cpu().numpy()
 
         t0 = time.perf_counter()
 
         # 1. Correlated demand  [N, S]
-        D = mu + L @ Z
-        D = np.maximum(D, 0.0)          # demand ≥ 0
+        #    Peak RAM here: L(16 MB) + Z(1 GB) + D(1 GB) ≈ 2 GB
+        D = mu + (L @ Z)
+        del L, Z                         # free inputs immediately
+        np.maximum(D, 0.0, out=D)        # demand ≥ 0 (in-place)
 
         # 2. Sales
-        X = np.minimum(D, Q)            # [N, S]
+        X = np.minimum(D, Q)             # [N, S]  — 1 GB
 
         # 3. Per-scenario profit
-        overage = np.maximum(Q - D, 0.0)
-        profit = (p * X) - (c * Q) + (s * overage)   # [N, S]
+        #    Compute overage in-place into D (no longer needed as D)
+        np.subtract(Q, D, out=D)         # D now holds Q - D
+        np.maximum(D, 0.0, out=D)        # D now holds max(Q - D, 0)
+        # profit = p*X - c*Q + s*overage — reuse D for overage
+        profit = (p * X) - (c * Q) + (s * D)   # [N, S]
+        del X, D                          # free before reduction
 
         # 4. Reduce over scenarios
         expected_profit = profit.mean(axis=1).squeeze()  # [N]
+        del profit
 
         wall_ms = (time.perf_counter() - t0) * 1e3
 
