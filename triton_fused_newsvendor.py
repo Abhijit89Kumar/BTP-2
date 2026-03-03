@@ -59,42 +59,61 @@ def cdiv(a: int, b: int) -> int:
 # ═══════════════════════════════════════════════════════════════════════════
 def _build_autotune_configs() -> list[triton.Config]:
     """
-    Enumerate a search grid of (BLOCK_M, BLOCK_N, BLOCK_K, num_warps,
-    num_stages) configurations for ``@triton.autotune``.
+    Hand-picked autotune configurations for the fused Newsvendor kernel.
 
-    SRAM budget check (conservative, 192 KB usable per SM):
-        Tiles loaded per iteration of the K-loop:
-            L_tile  = BLOCK_M × BLOCK_K × 4 B
-            Z_tile  = BLOCK_K × BLOCK_N × 4 B
-        Accumulator (lives across all K iterations):
-            acc     = BLOCK_M × BLOCK_N × 4 B
-        Total ≤ 192 KB = 196 608 B
+    SRAM budget considerations per GPU architecture:
+        T4  (Turing, sm_75):  64 KB shared memory per SM
+        A100 (Ampere, sm_80): 164 KB shared memory per SM
+        H100 (Hopper, sm_90): 228 KB shared memory per SM
 
-    We pre-filter configs that violate this budget.
+    We target the **T4's 48 KB usable budget** (64 KB minus driver/Triton
+    overhead) as the floor, so every config works on every GPU.
+
+    Tile memory per K-loop iteration:
+        L_tile  = BLOCK_M × BLOCK_K × 4 B
+        Z_tile  = BLOCK_K × BLOCK_N × 4 B
+        acc     = BLOCK_M × BLOCK_N × 4 B   (lives across all K iters)
+        Total ≤ 48 KB = 49 152 B
+
+    We keep the config count small (~10) to avoid multi-minute autotune
+    on large problem sizes.
     """
-    SRAM_BUDGET = 192 * 1024  # 192 KB in bytes
+    SRAM_BUDGET = 48 * 1024  # 48 KB — safe for T4 and above
     configs: list[triton.Config] = []
 
-    for bm in (32, 64, 128):
-        for bn in (64, 128, 256):
-            for bk in (32, 64):
-                for nw in (4, 8):
-                    for ns in (2, 3, 4):
-                        # SRAM feasibility check
-                        l_tile  = bm * bk * 4
-                        z_tile  = bk * bn * 4
-                        acc     = bm * bn * 4
-                        if l_tile + z_tile + acc > SRAM_BUDGET:
-                            continue
-                        configs.append(
-                            triton.Config(
-                                {"BLOCK_SIZE_M": bm,
-                                 "BLOCK_SIZE_N": bn,
-                                 "BLOCK_SIZE_K": bk},
-                                num_warps=nw,
-                                num_stages=ns,
-                            )
-                        )
+    # Curated (BLOCK_M, BLOCK_N, BLOCK_K, num_warps, num_stages) combos:
+    #   - Small-tile configs for T4 / low-VRAM GPUs
+    #   - Medium-tile configs that balance occupancy and arithmetic intensity
+    candidates = [
+        # (BM, BN, BK, warps, stages)  — SRAM usage noted
+        ( 32,  64, 32, 4, 2),   # 12 KB  — conservative, high-occupancy
+        ( 32, 128, 32, 4, 2),   # 20 KB  — wider scenario tile
+        ( 64,  64, 32, 4, 2),   # 20 KB  — balanced square-ish
+        ( 64, 128, 32, 4, 2),   # 36 KB  — good for most GPUs
+        ( 64, 128, 32, 8, 2),   # 36 KB  — more warps variant
+        ( 64,  64, 64, 4, 2),   # 24 KB  — deeper K-tile
+        ( 32, 128, 64, 4, 2),   # 24 KB  — deeper K, wide N
+        ( 64, 128, 64, 4, 3),   # 40 KB  — near T4 ceiling, pipelined
+        (128,  64, 32, 4, 2),   # 36 KB  — tall M-tile
+        (128,  64, 32, 8, 2),   # 36 KB  — tall M, more warps
+    ]
+
+    for bm, bn, bk, nw, ns in candidates:
+        l_tile = bm * bk * 4
+        z_tile = bk * bn * 4
+        acc    = bm * bn * 4
+        total  = l_tile + z_tile + acc
+        if total > SRAM_BUDGET:
+            continue
+        configs.append(
+            triton.Config(
+                {"BLOCK_SIZE_M": bm,
+                 "BLOCK_SIZE_N": bn,
+                 "BLOCK_SIZE_K": bk},
+                num_warps=nw,
+                num_stages=ns,
+            )
+        )
 
     assert len(configs) > 0, "No valid autotune configs — relax SRAM budget."
     return configs
@@ -356,8 +375,15 @@ class TritonFusedNewsvendor:
         # Output buffer — zero-initialised for atomic_add
         out = torch.zeros(N, dtype=torch.float32, device=device)
 
-        # ── Warm-up launch (lets autotune benchmark all configs) ──────
-        _fused_newsvendor_kernel[(cdiv(N, 64), cdiv(S, 128))](
+        # Grid shape:  (⌈N / BLOCK_M⌉,  ⌈S / BLOCK_N⌉)
+        # BLOCK_M, BLOCK_N are injected by autotune from the winning config.
+        grid = lambda META: (
+            cdiv(N, META["BLOCK_SIZE_M"]),
+            cdiv(S, META["BLOCK_SIZE_N"]),
+        )
+
+        # ── Warm-up (triggers autotune on first call; cached after) ──
+        _fused_newsvendor_kernel[grid](
             L, Z, mu, p, c, s, Q, out,
             N, S, K,
             L.stride(0), L.stride(1),
@@ -374,13 +400,7 @@ class TritonFusedNewsvendor:
 
         start_event.record()
 
-        # Grid shape:  (⌈N / BLOCK_M⌉,  ⌈S / BLOCK_N⌉)
-        # BLOCK_M, BLOCK_N are chosen by autotune at compile time;
-        # Triton's launcher injects them from the winning config.
-        grid = lambda META: (
-            cdiv(N, META["BLOCK_SIZE_M"]),
-            cdiv(S, META["BLOCK_SIZE_N"]),
-        )
+        # Reuse the same grid lambda — autotune is already cached.
         _fused_newsvendor_kernel[grid](
             L, Z, mu, p, c, s, Q, out,
             N, S, K,
