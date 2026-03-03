@@ -184,8 +184,12 @@ class PyTorchMonteCarlo:
             _ = fn(L, Z, mu, p, c, s, Q)
             torch.cuda.synchronize()
 
-        # Reset peak memory stats
+        # Clear cached blocks so the timed run's allocations (including
+        # the D=[N,S] intermediate) show up as fresh peaks, giving an
+        # accurate comparison against the Triton kernel which never
+        # allocates D.
         if device.type == "cuda":
+            torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device)
 
         # Timed run

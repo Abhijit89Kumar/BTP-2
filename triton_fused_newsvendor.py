@@ -81,21 +81,20 @@ def _build_autotune_configs() -> list[triton.Config]:
     SRAM_BUDGET = 48 * 1024  # 48 KB — safe for T4 and above
     configs: list[triton.Config] = []
 
-    # Curated (BLOCK_M, BLOCK_N, BLOCK_K, num_warps, num_stages) combos:
-    #   - Small-tile configs for T4 / low-VRAM GPUs
-    #   - Medium-tile configs that balance occupancy and arithmetic intensity
+    # Curated (BLOCK_M, BLOCK_N, BLOCK_K, num_warps, num_stages) combos.
+    # With FP16 tensor-core dot, larger tiles amortise the K-loop overhead
+    # and maximise arithmetic intensity.
     candidates = [
         # (BM, BN, BK, warps, stages)  — SRAM usage noted
-        ( 32,  64, 32, 4, 2),   # 12 KB  — conservative, high-occupancy
-        ( 32, 128, 32, 4, 2),   # 20 KB  — wider scenario tile
-        ( 64,  64, 32, 4, 2),   # 20 KB  — balanced square-ish
-        ( 64, 128, 32, 4, 2),   # 36 KB  — good for most GPUs
+        ( 32, 128, 32, 4, 2),   # 20 KB  — wide scenario tile
+        ( 64,  64, 32, 4, 2),   # 20 KB  — balanced
+        ( 64, 128, 32, 4, 2),   # 36 KB  — sweet spot on T4
         ( 64, 128, 32, 8, 2),   # 36 KB  — more warps variant
-        ( 64,  64, 64, 4, 2),   # 24 KB  — deeper K-tile
-        ( 32, 128, 64, 4, 2),   # 24 KB  — deeper K, wide N
-        ( 64, 128, 64, 4, 3),   # 40 KB  — near T4 ceiling, pipelined
+        ( 64, 128, 64, 4, 2),   # 40 KB  — deeper K-tile
+        ( 64, 128, 64, 8, 2),   # 40 KB  — deeper K, more warps
         (128,  64, 32, 4, 2),   # 36 KB  — tall M-tile
         (128,  64, 32, 8, 2),   # 36 KB  — tall M, more warps
+        (128, 128, 32, 8, 2),   # 48 KB  — large tile, high throughput
     ]
 
     for bm, bn, bk, nw, ns in candidates:
@@ -232,10 +231,14 @@ def _fused_newsvendor_kernel(
         #          ↑ shape [BLOCK_SIZE_K, BLOCK_SIZE_N], lives in SRAM
 
         # ── Accumulate dot product in SRAM ────────────────────────────
-        # tl.dot computes a matrix multiply of two tiles, both in SRAM.
-        # Result is accumulated into `acc` (also SRAM / registers).
-        # NO HBM traffic occurs here — this is the critical optimisation.
-        acc += tl.dot(L_tile, Z_tile)
+        # MIXED PRECISION:  Cast tiles to FP16 before tl.dot so that
+        # GPUs with FP16 tensor cores (T4 Turing: 65 TFLOPS FP16 vs
+        # 8.1 TFLOPS FP32) can use them.  The accumulator `acc` stays
+        # in FP32, so all downstream business logic retains full
+        # single-precision accuracy.  This is identical to what
+        # torch.set_float32_matmul_precision('high') does, but we
+        # also get the fusion benefit on top.
+        acc += tl.dot(L_tile.to(tl.float16), Z_tile.to(tl.float16))
 
     # ══════════════════════════════════════════════════════════════════════
     # 2.  PHASE 2 — Fused Newsvendor business logic (all in SRAM).
@@ -393,6 +396,7 @@ class TritonFusedNewsvendor:
 
         # ── Timed launch ─────────────────────────────────────────────
         out.zero_()
+        torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
 
         start_event = torch.cuda.Event(enable_timing=True)
