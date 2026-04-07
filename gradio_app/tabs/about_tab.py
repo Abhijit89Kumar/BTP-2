@@ -34,10 +34,18 @@ ABOUT_CONTENT = r"""
 ## Overview
 
 This application provides an interactive interface for solving several
-variants of the stochastic newsvendor inventory optimisation problem using
-GPU-accelerated Monte-Carlo simulation.  It targets Google Colab T4 GPUs
-(15 GB VRAM) and benchmarks three solver backends: CPU (NumPy), PyTorch
-GPU with `torch.compile`, and custom Triton fused kernels.
+variants of the **stochastic newsvendor inventory optimisation problem**
+using GPU-accelerated Monte-Carlo simulation.
+
+**In plain English:** a newsvendor must decide how many units to order
+*before* knowing exact customer demand. Order too many and unsold stock
+is salvaged at a loss; order too few and you miss profitable sales.
+This app lets you explore that trade-off at scale across hundreds of
+correlated products.
+
+It targets Google Colab T4 GPUs (15 GB VRAM) and benchmarks three solver
+backends: CPU (NumPy), PyTorch GPU with `torch.compile`, and custom
+Triton fused kernels.
 
 ---
 
@@ -45,9 +53,11 @@ GPU with `torch.compile`, and custom Triton fused kernels.
 
 ### 1. Base Newsvendor
 
-The classical single-period inventory problem.  For each product $i$:
+The classical single-period inventory problem. For each product $i$:
 
-$$\pi_i = p_i \cdot \min(D_i, Q_i) - c_i \cdot Q_i + s_i \cdot \max(Q_i - D_i, 0)$$
+$$
+\pi_i = p_i \cdot \min(D_i,\, Q_i) \;-\; c_i \cdot Q_i \;+\; s_i \cdot \max(Q_i - D_i,\, 0)
+$$
 
 where:
 - $D_i$ is the stochastic demand (correlated across products via Cholesky factor $L$)
@@ -56,18 +66,24 @@ where:
 
 The expected profit is estimated via Monte-Carlo:
 
-$$\mathbb{E}[\pi_i] = \frac{1}{S} \sum_{j=1}^{S} \pi_i^{(j)}$$
+$$
+\mathbb{E}[\pi_i] = \displaystyle\frac{1}{S} \sum_{j=1}^{S} \pi_i^{(j)}
+$$
 
-where $D^{(j)} = \max(\mu + L \cdot Z^{(j)}, 0)$ and $Z \sim \mathcal{N}(0, I)$.
+where $D^{(j)} = \max(\mu + L \cdot Z^{(j)},\, 0)$ and $Z \sim \mathcal{N}(0, I)$.
 
 ### 2. Grid Search (Optimal $Q^*$)
 
 Finds the optimal order quantity $Q_i^*$ by evaluating $\mathbb{E}[\pi_i]$
 at $K$ grid points:
 
-$$Q_i^{(k)} = \mu_i \cdot r_k, \quad r_k \in [\text{ratio\_min}, \text{ratio\_max}]$$
+$$
+Q_i^{(k)} = \mu_i \cdot r_k, \quad r_k \in [\text{ratio min},\; \text{ratio max}]
+$$
 
-$$Q_i^* = \arg\max_k \; \mathbb{E}[\pi_i(Q_i^{(k)})]$$
+$$
+Q_i^* = \arg\max_k \; \mathbb{E}\!\left[\pi_i\!\left(Q_i^{(k)}\right)\right]
+$$
 
 The profit surface $\mathbb{E}[\pi_i](Q)$ reveals the shape of each
 product's objective function.
@@ -77,12 +93,16 @@ product's objective function.
 Conditional Value at Risk at level $\alpha$ is the expected profit in the
 worst $\alpha$-fraction of scenarios:
 
-$$\text{VaR}_\alpha = \inf\{x : P(\pi \le x) \ge \alpha\}$$
+$$
+\text{VaR}_\alpha = \min\!\bigl\{x : P(\pi \le x) \ge \alpha\bigr\}
+$$
 
-$$\text{CVaR}_\alpha = \mathbb{E}[\pi \mid \pi \le \text{VaR}_\alpha]$$
+$$
+\text{CVaR}_\alpha = \mathbb{E}\!\bigl[\pi \mid \pi \le \text{VaR}_\alpha\bigr]
+$$
 
 CVaR is a **coherent risk measure** widely used in operations research for
-risk-averse inventory decisions.  A risk-averse manager might optimise for
+risk-averse inventory decisions. A risk-averse manager might optimise for
 CVaR instead of expected profit to protect against worst-case demand
 realisations.
 
@@ -90,7 +110,9 @@ realisations.
 
 Adds a total procurement budget constraint:
 
-$$\sum_{i=1}^{N} c_i \cdot Q_i \le B$$
+$$
+\sum_{i=1}^{N} c_i \cdot Q_i \le B
+$$
 
 Solved via **Lagrangian dual decomposition** with bisection on the multiplier
 $\lambda \ge 0$:
@@ -106,7 +128,9 @@ This reuses the grid-search kernels -- no new Triton kernel is needed.
 When product $i$ stocks out, a fraction $\beta_{ik}$ of unmet demand is
 redirected to substitute product $k$:
 
-$$D_i^{\text{eff}} = D_i + \sum_{k \in \text{subs}(i)} \beta_{ik} \cdot \max(D_k - Q_k, 0)$$
+$$
+D_i^{\text{eff}} = D_i + \sum_{k \in \text{subs}(i)} \beta_{ik} \cdot \max(D_k - Q_k,\, 0)
+$$
 
 Substitutes are chosen within the same category (tractors with tractors,
 generators with generators).
@@ -142,7 +166,7 @@ Phase 4: Atomic store     out[m] += partial / n_tiles           (HBM)
 ### Autotuning
 
 The kernel uses `@triton.autotune` with ~9 hand-picked configurations
-that all fit within the T4's 48 KB usable SRAM budget per SM.  Tile sizes
+that all fit within the T4's 48 KB usable SRAM budget per SM. Tile sizes
 range from $32 \times 128$ to $128 \times 128$.
 
 ---
@@ -150,7 +174,7 @@ range from $32 \times 128$ to $128 \times 128$.
 ## How to Use This App
 
 1. **Tab 1 -- Problem Setup**: Configure $N$ (products), $S$ (scenarios),
-   seed, and tractor fraction.  Check the VRAM estimate, then click
+   seed, and tractor fraction. Check the VRAM estimate, then click
    *Generate Data*.
 
 2. **Tab 2 -- Run Solvers**: Select a variant, configure its parameters,
@@ -168,7 +192,7 @@ range from $32 \times 128$ to $128 \times 128$.
 | N | S | Est. VRAM | Notes |
 |---|---|-----------|-------|
 | 128 | 131072 | ~0.13 GB | Fast, good for testing |
-| 512 | 32768 | ~0.54 GB | Moderate |
+| 512 | 32768 | ~0.54 GB | Moderate (recommended first run) |
 | 1024 | 65536 | ~2.1 GB | Large-scale |
 | 2048 | 131072 | ~8.5 GB | Near T4 limit (use Triton!) |
 

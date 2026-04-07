@@ -48,8 +48,10 @@ def create_solver_tab(state: gr.State):
     with gr.TabItem("2. Run Solvers"):
         gr.Markdown(
             "## Solver Configuration & Run\n"
-            "Select a newsvendor variant, configure its parameters, pick "
-            "solver backends, and run."
+            "Pick a problem variant on the left and solver backends on the "
+            "right, then click **Run Solvers**. Each backend solves the "
+            "same mathematical problem -- comparing their speed and memory "
+            "usage is the core contribution of this project."
         )
 
         with gr.Row():
@@ -60,6 +62,26 @@ def create_solver_tab(state: gr.State):
                     value="Base",
                     label="Newsvendor Variant",
                 )
+
+                with gr.Accordion("What do these variants mean?", open=False):
+                    gr.Markdown(
+                        "- **Base:** Evaluates profit at a fixed order quantity "
+                        "(Q = mean demand). Fastest to run. A good baseline to "
+                        "start with.\n"
+                        "- **Grid Search Q*:** Tries many different order "
+                        "quantities and finds the best one for each product. "
+                        "Like testing different amounts to order and picking the "
+                        "winner.\n"
+                        "- **CVaR (Risk-Averse):** Focuses on the worst-case "
+                        "scenarios (the unlucky tail). For managers who would "
+                        "rather play it safe than gamble on high demand.\n"
+                        "- **Budget-Constrained:** Adds a spending limit -- "
+                        "\"What if I only have X budget across all products?\" "
+                        "Finds the optimal allocation under that constraint.\n"
+                        "- **Substitution:** Models demand spillover -- if "
+                        "product A is out of stock, some customers buy product B "
+                        "instead. Captures cross-product effects."
+                    )
 
                 # -- Grid Search parameters --
                 with gr.Group(visible=False) as gs_group:
@@ -118,9 +140,37 @@ def create_solver_tab(state: gr.State):
             # ---- Right column: solver selection + run ----
             with gr.Column(scale=1):
                 gr.Markdown("### Solver Backends")
-                chk_cpu = gr.Checkbox(value=True, label="CPU (NumPy)")
-                chk_pytorch = gr.Checkbox(value=True, label="PyTorch GPU (torch.compile)")
-                chk_triton = gr.Checkbox(value=True, label="Triton Fused Kernel")
+                chk_cpu = gr.Checkbox(
+                    value=True, label="CPU (NumPy)",
+                    info="Slowest but most accurate. Gold-standard reference. Skip for large N.",
+                )
+                chk_pytorch = gr.Checkbox(
+                    value=True, label="PyTorch GPU (torch.compile)",
+                    info="GPU-accelerated with torch.compile. Fast but materializes full demand matrix.",
+                )
+                chk_triton = gr.Checkbox(
+                    value=True, label="Triton Fused Kernel",
+                    info="Custom SRAM-fused kernel. Fastest, lowest memory. The main innovation.",
+                )
+
+                with gr.Accordion("What are solver backends?", open=False):
+                    gr.Markdown(
+                        "All three backends solve **the exact same mathematical "
+                        "problem** and should produce (nearly) identical answers. "
+                        "The difference is *how* they compute it:\n\n"
+                        "1. **CPU (NumPy):** Runs on the processor. Simple and "
+                        "reliable, but slow for large problems.\n"
+                        "2. **PyTorch GPU:** Runs on the GPU using standard "
+                        "PyTorch operations. Much faster, but allocates the full "
+                        "N x S demand matrix in GPU memory.\n"
+                        "3. **Triton Fused Kernel:** A custom GPU kernel written "
+                        "for this project. It fuses the matrix multiply with the "
+                        "profit calculation so the demand matrix never leaves "
+                        "fast on-chip SRAM. This is the core technical "
+                        "contribution of the thesis.\n\n"
+                        "Comparing their wall time, memory usage, and numerical "
+                        "agreement is the point of this benchmarking suite."
+                    )
 
                 run_btn = gr.Button("Run Solvers", variant="primary")
 
@@ -128,7 +178,7 @@ def create_solver_tab(state: gr.State):
                     label="Run Log",
                     interactive=False,
                     lines=16,
-                    value="Select a variant and click Run Solvers.",
+                    value="Step 1: Generate data in Tab 1.  Step 2: Select a variant above.  Step 3: Click Run Solvers.",
                 )
 
         # -----------------------------------------------------------------

@@ -36,9 +36,10 @@ def create_product_tab(state: gr.State):
     with gr.TabItem("4. Per-Product Analysis"):
         gr.Markdown(
             "## Per-Product Analysis\n"
-            "Select a product index to inspect its parameters and compare "
-            "solver outputs.  Click **Load Product** after generating data "
-            "and running solvers."
+            "Drill down into a single product to see its demand, price, "
+            "cost, and salvage parameters, and compare what each solver "
+            "computed for that product's expected profit. Use the slider "
+            "to pick a product index (0 to N-1), then click **Load Product**."
         )
 
         with gr.Row():
@@ -56,7 +57,7 @@ def create_product_tab(state: gr.State):
                     label="Product Parameters",
                     interactive=False,
                     lines=12,
-                    value="Generate data first.",
+                    value="No data yet. Generate data in Tab 1 first, then come back here.",
                 )
 
             with gr.Column(scale=1):
@@ -64,7 +65,7 @@ def create_product_tab(state: gr.State):
                     label="Profit Comparison Across Solvers",
                     interactive=False,
                     lines=10,
-                    value="Run solvers first.",
+                    value="No solver results yet. Run solvers in Tab 2, then come back here and click Load Product.",
                 )
 
         product_plot = gr.Plot(label="Per-Product Visualisation")
@@ -192,7 +193,7 @@ def create_product_tab(state: gr.State):
                             )
                     profit_lines.append("")
             else:
-                profit_lines.append("No solver results yet. Run solvers first (Tab 2).")
+                profit_lines.append("No solver results yet. Run solvers in Tab 2, then come back here and click Load Product.")
 
             # ----------------------------------------------------------
             # Per-product plot

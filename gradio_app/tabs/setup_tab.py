@@ -38,10 +38,30 @@ def create_setup_tab(state: gr.State):
     with gr.TabItem("1. Problem Setup"):
         gr.Markdown(
             "## Problem Setup\n"
-            "Configure the Monte-Carlo simulation dimensions and generate "
-            "input tensors.  The memory estimator targets a Google Colab "
-            "T4 GPU (15 GB VRAM)."
+            "Configure the simulation and generate input data. "
+            "This is always the first step -- nothing else works until "
+            "you click **Generate Data** below."
         )
+
+        with gr.Accordion("How does this work?", open=False):
+            gr.Markdown(
+                "This tab creates a synthetic dealership network of **N products** "
+                "(tractors and generators) with realistic, correlated demand patterns.\n\n"
+                "- **N (products):** The number of products in the dealership network. "
+                "Think of each product as a different model of tractor or generator "
+                "sold across locations. More products = more realistic but slower to solve.\n"
+                "- **S (scenarios):** The number of random demand scenarios simulated "
+                "via Monte Carlo. Higher S gives more accurate profit estimates but "
+                "uses more GPU memory.\n"
+                "- **Tractor Fraction:** What percentage of products are tractors "
+                "(the rest are generators). Tractors and generators have different "
+                "price/cost/demand profiles.\n"
+                "- **Generate Data:** Creates all the input tensors (demand means, "
+                "correlation matrix, prices, costs, salvage values) and moves them "
+                "to GPU if available.\n\n"
+                "**Recommended first-time setup:** N=512, S=32768 (the defaults). "
+                "This runs in seconds and uses under 1 GB of VRAM."
+            )
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -49,7 +69,7 @@ def create_setup_tab(state: gr.State):
                     choices=["128", "256", "512", "1024", "2048"],
                     value="512",
                     label="N (products)",
-                    info="Number of product-location nodes (power of 2)",
+                    info="More products = more realistic but slower. Start with 512.",
                 )
                 s_dropdown = gr.Dropdown(
                     choices=[
@@ -58,7 +78,7 @@ def create_setup_tab(state: gr.State):
                     ],
                     value="32768",
                     label="S (scenarios)",
-                    info="Number of Monte-Carlo demand scenarios",
+                    info="More scenarios = more accurate profit estimates. 32768 is a good default.",
                 )
                 seed_input = gr.Number(
                     value=42,

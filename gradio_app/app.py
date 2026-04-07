@@ -46,19 +46,27 @@ from gradio_app.tabs import (
 # ---------------------------------------------------------------------------
 APP_TITLE = "Newsvendor Solver Suite"
 APP_DESCRIPTION = """\
-### GPU-Accelerated Multi-Echelon Stochastic Newsvendor Optimization
+### GPU-Accelerated Newsvendor Inventory Optimization
 
-Solve **5 variants** of the newsvendor problem with **3 solver backends** (CPU-NumPy, PyTorch-Compile, Triton-Fused) and compare performance.
+**What is this?** A dealership must decide how many units of each product to order
+*before* knowing actual customer demand. Order too many and you lose money on unsold
+stock; order too few and you miss sales. This app simulates that decision across
+hundreds of correlated products and compares three solver implementations:
+a plain CPU solver, a PyTorch GPU solver, and a **custom Triton GPU kernel** that
+keeps all intermediate data in fast on-chip SRAM (the main technical contribution).
 
-| Variant | Description |
-|---------|-------------|
-| **Base** | Evaluate E[profit] at Q = mu (fixed order quantity) |
-| **Grid Search** | Find optimal Q* over K grid points per product |
-| **CVaR** | Risk-averse: optimize worst alpha% scenarios |
-| **Budget** | Lagrangian dual with total procurement budget constraint |
-| **Substitution** | Cross-product demand substitution on stockout |
+**Quick start:** Go to **Tab 1**, click *Generate Data*, then go to **Tab 2**, pick
+a variant, and click *Run Solvers*. Results appear in **Tab 3**.
 
-*Built with Triton GPU kernels for SRAM-fused computation. IIT Kharagpur BTP.*
+| Variant | Plain-English Description |
+|---------|--------------------------|
+| **Base** | Evaluate profit at a fixed order quantity (simplest baseline) |
+| **Grid Search** | Try many order quantities, find the best one per product |
+| **CVaR** | Focus on the worst-case scenarios (risk-averse manager) |
+| **Budget** | Find optimal orders when total spending is capped |
+| **Substitution** | If one product stocks out, customers switch to a substitute |
+
+*IIT Kharagpur B.Tech Project -- built with Triton, PyTorch, and Gradio.*
 """
 
 

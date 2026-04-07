@@ -36,8 +36,10 @@ def create_results_tab(state: gr.State):
     with gr.TabItem("3. Results Dashboard"):
         gr.Markdown(
             "## Results Dashboard\n"
-            "Compare performance across solver backends.  "
-            "Click **Refresh** after running solvers."
+            "This tab shows how the three solver backends compare on "
+            "**wall-clock time**, **GPU memory usage**, and **numerical "
+            "correctness** (they should all agree). Click **Refresh** "
+            "after running solvers in Tab 2."
         )
 
         refresh_btn = gr.Button("Refresh Results", variant="secondary")
@@ -57,7 +59,7 @@ def create_results_tab(state: gr.State):
                     label="Correctness Metrics",
                     interactive=False,
                     lines=8,
-                    value="Run solvers first.",
+                    value="No results yet. Go to Tab 2, select a variant, and click Run Solvers. Then come back here and click Refresh.",
                 )
 
         perf_bar_plot = gr.Plot(label="Wall Time Comparison")
