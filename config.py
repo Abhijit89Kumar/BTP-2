@@ -130,6 +130,47 @@ class TritonTuningConfig:
 # ---------------------------------------------------------------------------
 # Convenience: default configs used when running ``python benchmark.py``
 # ---------------------------------------------------------------------------
-DEFAULT_CONFIG   = NewsvendorConfig()
-DEFAULT_FINANCE  = FinancialParams()
-DEFAULT_TRITON   = TritonTuningConfig()
+# ---------------------------------------------------------------------------
+# Extension-specific configurations
+# ---------------------------------------------------------------------------
+@dataclass
+class GridSearchConfig:
+    """Configuration for the optimal Q* grid search extension."""
+    K: int = 64                          # number of Q grid points
+    q_ratio_min: float = 0.3             # Q_min = μ × q_ratio_min
+    q_ratio_max: float = 2.5             # Q_max = μ × q_ratio_max
+
+
+@dataclass
+class CVaRConfig:
+    """Configuration for the CVaR risk-averse extension."""
+    alpha: float = 0.05                  # risk level (e.g. 0.05 = worst 5%)
+    num_bins: int = 256                  # histogram bins for Triton kernel
+
+
+@dataclass
+class BudgetConfig:
+    """Configuration for the budget-constrained extension."""
+    budget_fraction: float = 0.7         # B = fraction × Σ c_i · μ_i (unconstrained cost)
+    max_iterations: int = 30             # bisection iterations
+    tolerance: float = 1e-3              # convergence tolerance (relative)
+
+
+@dataclass
+class SubstitutionConfig:
+    """Configuration for the multi-product substitution extension."""
+    max_subs: int = 4                    # max substitutes per product
+    beta_min: float = 0.05               # min substitution fraction
+    beta_max: float = 0.30               # max substitution fraction
+
+
+# ---------------------------------------------------------------------------
+# Convenience: default configs used when running ``python benchmark.py``
+# ---------------------------------------------------------------------------
+DEFAULT_CONFIG       = NewsvendorConfig()
+DEFAULT_FINANCE      = FinancialParams()
+DEFAULT_TRITON       = TritonTuningConfig()
+DEFAULT_GRID_SEARCH  = GridSearchConfig()
+DEFAULT_CVAR         = CVaRConfig()
+DEFAULT_BUDGET       = BudgetConfig()
+DEFAULT_SUBSTITUTION = SubstitutionConfig()

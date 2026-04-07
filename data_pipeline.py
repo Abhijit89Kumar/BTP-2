@@ -32,6 +32,8 @@ from config import (
     FinancialParams,
     InventoryCategory,
     NewsvendorConfig,
+    SubstitutionConfig,
+    DEFAULT_SUBSTITUTION,
 )
 
 logger = logging.getLogger(__name__)
@@ -360,6 +362,65 @@ class DataPipeline:
             L=L, mu=mu, p=p, c=c, s=s, Q=Q, Z=Z,
             N=N, S=S, category_mask=mask,
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Substitution graph generator
+# ═══════════════════════════════════════════════════════════════════════════
+class SubstitutionGraphGenerator:
+    """
+    Generates a sparse substitution graph for the multi-product substitution
+    newsvendor extension.
+
+    Each product gets up to ``max_subs`` substitutes, chosen from the same
+    category (tractors substitute with tractors, generators with generators).
+    Substitution fractions β are drawn uniformly from [beta_min, beta_max].
+    """
+
+    def __init__(self, sub_cfg: SubstitutionConfig = DEFAULT_SUBSTITUTION) -> None:
+        self.sub_cfg = sub_cfg
+
+    def generate(
+        self,
+        N: int,
+        category_mask: np.ndarray,
+        seed: int = 42,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return (sub_idx, sub_frac) each of shape [N, max_subs].
+
+        sub_idx[i, k]  = index of k-th substitute for product i (-1 if none).
+        sub_frac[i, k] = fraction β of unmet demand redirected (0 if none).
+        """
+        rng = np.random.default_rng(seed + 999)
+        max_subs = self.sub_cfg.max_subs
+        beta_min = self.sub_cfg.beta_min
+        beta_max = self.sub_cfg.beta_max
+
+        sub_idx = np.full((N, max_subs), -1, dtype=np.int64)
+        sub_frac = np.zeros((N, max_subs), dtype=np.float64)
+
+        tractor_indices = np.where(category_mask)[0]
+        gen_indices = np.where(~category_mask)[0]
+
+        for i in range(N):
+            # Pick substitutes from same category
+            if category_mask[i]:
+                pool = tractor_indices[tractor_indices != i]
+            else:
+                pool = gen_indices[gen_indices != i]
+
+            if len(pool) == 0:
+                continue
+
+            n_subs = min(max_subs, len(pool))
+            chosen = rng.choice(pool, size=n_subs, replace=False)
+            fracs = rng.uniform(beta_min, beta_max, size=n_subs)
+
+            sub_idx[i, :n_subs] = chosen
+            sub_frac[i, :n_subs] = fracs
+
+        return sub_idx, sub_frac
 
 
 # ---------------------------------------------------------------------------

@@ -372,111 +372,172 @@ def diagram_triton_grid(dpi: int) -> None:
 # Diagram 4 — Memory Hierarchy Comparison
 # ═══════════════════════════════════════════════════════════════════════════
 def diagram_memory_hierarchy(dpi: int) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(14, 7.5), dpi=dpi)
-    fig.patch.set_facecolor(C["bg"])
-    fig.suptitle("Memory Hierarchy — PyTorch Baseline vs Triton Fused Kernel",
-                 fontsize=15, fontweight="bold", y=0.97, color=C["text"])
+    """
+    Visual memory schematic — box heights are proportional to data sizes.
+    Left: PyTorch — D matrix materialised in HBM (large red block).
+    Right: Triton  — everything stays in SRAM, only 8 KB leaves.
+    """
+    RED   = "#C62828"
+    RED_L = "#FFEBEE"
+    BLUE  = "#1565C0"
+    BLUE_L= "#E3F2FD"
+    GRN   = "#2E7D32"
+    GRN_L = "#E8F5E9"
+    GRN_M = "#A5D6A7"
+    ORG   = "#E65100"
+    ORG_L = "#FFF3E0"
+    GREY  = "#546E7A"
+    WHITE = "#FFFFFF"
+    BG    = "#FAFBFC"
 
-    # ================================================================
-    # LEFT: PyTorch baseline (HBM-bound)
-    # ================================================================
-    ax = axes[0]
-    ax.set_xlim(-0.5, 10.5)
-    ax.set_ylim(-0.5, 10)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.set_title("PyTorch + torch.compile (Inductor)", fontsize=12,
-                 fontweight="bold", color=C["hbm"], pad=10)
+    fig = plt.figure(figsize=(16, 9), dpi=dpi)
+    fig.patch.set_facecolor(BG)
 
-    # HBM block
-    ax.add_patch(FancyBboxPatch(
-        (0.5, 0.5), 9, 9, boxstyle="round,pad=0.1,rounding_size=0.3",
-        facecolor="#E3F2FD", edgecolor=C["hbm"], lw=3, alpha=0.4))
-    _label(ax, 5, 9.1, "HBM  (High Bandwidth Memory — 80 GB)", fontsize=9,
-           bold=True, color=C["hbm"])
+    # Title
+    fig.text(0.5, 0.97, "Memory Hierarchy — PyTorch  vs  Triton Fused Kernel",
+             ha="center", va="top", fontsize=17, fontweight="bold", color="#212121")
 
-    # Step boxes (top to bottom)
-    _rounded_box(ax, (1.2, 7.2), 7.2, 1.0, C["white"],
-                 "1. L [N×N] and Z [N×S] loaded from HBM", fontsize=8.5)
-    _rounded_box(ax, (1.2, 5.5), 7.2, 1.0, C["accent"],
-                 "2. D = μ + L @ Z  →  D [N×S] WRITTEN TO HBM\n"
-                 "   ⚠ 2048 × 131072 × 4 B = 1.07 GB",
-                 fontsize=8.5, text_color=C["white"], edgecolor=C["accent"], lw=2.5)
-    _rounded_box(ax, (1.2, 3.8), 7.2, 1.0, C["white"],
-                 "3. D [N×S] RE-READ from HBM for X = min(D, Q)", fontsize=8.5)
-    _rounded_box(ax, (1.2, 2.1), 7.2, 1.0, C["white"],
-                 "4. Profit [N×S] WRITTEN to HBM, then reduced", fontsize=8.5)
+    # Vertical divider
+    fig.add_artist(plt.Line2D([0.5, 0.5], [0.03, 0.93],
+                              transform=fig.transFigure,
+                              color="#B0BEC5", lw=1.5, linestyle="--"))
 
-    # Red warning
-    _rounded_box(ax, (2.0, 0.7), 5.5, 0.8, "#FFCDD2",
-                 "3 full N×S HBM round-trips  →  ~3.2 GB traffic",
-                 fontsize=8.5, bold=True, edgecolor=C["accent"], lw=2)
+    # Column headers
+    fig.text(0.25, 0.92, "PyTorch  +  torch.compile",
+             ha="center", fontsize=13, fontweight="bold", color=BLUE)
+    fig.text(0.75, 0.92, "Triton Fused Kernel  ★  (This Work)",
+             ha="center", fontsize=13, fontweight="bold", color=GRN)
 
-    # Arrows
-    _arrow(ax, (4.8, 7.2), (4.8, 6.6), lw=1.5, color=C["hbm"])
-    _arrow(ax, (4.8, 5.5), (4.8, 4.9), lw=1.5, color=C["accent"])
-    _arrow(ax, (4.8, 3.8), (4.8, 3.2), lw=1.5, color=C["hbm"])
+    # ── helper: axes-independent rect on figure (in axes coords via add_axes) ──
+    # We draw each panel in its own axes, x∈[0,1], y∈[0,1]
+    ax_l = fig.add_axes([0.02, 0.04, 0.46, 0.86])
+    ax_r = fig.add_axes([0.52, 0.04, 0.46, 0.86])
+    for ax in (ax_l, ax_r):
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+        ax.set_facecolor(BG)
 
-    # ================================================================
-    # RIGHT: Triton fused (SRAM-bound)
-    # ================================================================
-    ax = axes[1]
-    ax.set_xlim(-0.5, 10.5)
-    ax.set_ylim(-0.5, 10)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.set_title("Triton Fused Kernel (This Work)", fontsize=12,
-                 fontweight="bold", color=C["sram"], pad=10)
+    def rect(ax, x, y, w, h, fc, ec, lw=1.5, zorder=2, alpha=1.0):
+        ax.add_patch(mpatches.FancyBboxPatch(
+            (x, y), w, h, boxstyle="round,pad=0.01",
+            facecolor=fc, edgecolor=ec, linewidth=lw,
+            zorder=zorder, alpha=alpha, transform=ax.transData,
+        ))
 
-    # HBM block (outer, thin)
-    ax.add_patch(FancyBboxPatch(
-        (0.5, 0.5), 9, 9, boxstyle="round,pad=0.1,rounding_size=0.3",
-        facecolor="#FFF3E0", edgecolor=C["sram"], lw=2, alpha=0.2))
-    _label(ax, 5, 9.1, "HBM  (only reads L, Z tiles + writes out[N])", fontsize=9,
-           bold=True, color=C["hbm"])
+    def label(ax, x, y, s, size=10, color="#212121", bold=False,
+              ha="center", va="center", zorder=6):
+        ax.text(x, y, s, ha=ha, va=va, fontsize=size, zorder=zorder,
+                color=color, fontweight="bold" if bold else "normal",
+                transform=ax.transData, clip_on=False, linespacing=1.35)
 
-    # SRAM block (inner, prominent)
-    ax.add_patch(FancyBboxPatch(
-        (1.0, 2.5), 8, 5.5, boxstyle="round,pad=0.1,rounding_size=0.3",
-        facecolor="#FFF8E1", edgecolor=C["sram"], lw=3, alpha=0.6))
-    _label(ax, 5, 7.7, "SRAM  (192 KB per SM — on-chip)", fontsize=9,
-           bold=True, color=C["sram"])
+    def arrow(ax, x0, y0, x1, y1, color, lw=2.0):
+        ax.annotate("", xy=(x1, y1), xytext=(x0, y0),
+                    arrowprops=dict(arrowstyle="-|>", color=color,
+                                   lw=lw, mutation_scale=16),
+                    zorder=7)
 
-    # Fused pipeline inside SRAM
-    _rounded_box(ax, (1.5, 6.2), 7, 0.9, C["white"],
-                 "1. tl.load L_tile [BM×BK] + Z_tile [BK×BN]  →  SRAM",
-                 fontsize=8.5)
-    _rounded_box(ax, (1.5, 5.0), 7, 0.9, C["white"],
-                 "2. acc += tl.dot(L_tile, Z_tile)  — FMA in registers",
-                 fontsize=8.5)
-    _rounded_box(ax, (1.5, 3.8), 7, 0.9, C["white"],
-                 "3. D = μ + acc;  X = min(D, Q);  Profit — ALL IN SRAM",
-                 fontsize=8.5)
-    _rounded_box(ax, (1.5, 2.7), 7, 0.8, C["white"],
-                 "4. partial_mean = sum(Profit) / S  — SRAM reduction",
-                 fontsize=8.5)
+    # ══════════════════════════════════════════════════════════
+    # LEFT — PyTorch / HBM
+    # ══════════════════════════════════════════════════════════
+    ax = ax_l
 
-    # Arrow out of SRAM
-    _arrow(ax, (5, 2.5), (5, 1.9), lw=2, color=C["sram"])
+    # HBM container
+    rect(ax, 0.03, 0.03, 0.94, 0.90, BLUE_L, BLUE, lw=2.5, zorder=1)
+    label(ax, 0.5, 0.91, "HBM  (High Bandwidth Memory)", size=11,
+          color=BLUE, bold=True)
 
-    # Final output
-    _rounded_box(ax, (2.0, 1.0), 5.5, 0.8, "#C8E6C9",
-                 "tl.atomic_add → out[N]  (only 8 KB for N=2048)",
-                 fontsize=8.5, bold=True, edgecolor=C["green"], lw=2)
+    # ── Inputs: L and Z side by side ──
+    rect(ax, 0.07, 0.75, 0.25, 0.10, WHITE, BLUE, lw=1.5)
+    label(ax, 0.195, 0.80, "L  [N×N]\n16 MB", size=9.5, color=BLUE)
 
-    # Green success
-    _rounded_box(ax, (2.5, 0.0), 4.5, 0.6, "#A5D6A7",
-                 "D [N×S] NEVER materialised  →  ~0 GB saved",
-                 fontsize=8.5, bold=True, edgecolor=C["green"], lw=2)
+    rect(ax, 0.37, 0.75, 0.25, 0.10, WHITE, BLUE, lw=1.5)
+    label(ax, 0.495, 0.80, "Z  [N×S]\n1.07 GB", size=9.5, color=BLUE)
 
-    # Arrows inside SRAM
-    _arrow(ax, (5, 6.2), (5, 5.95), lw=1.5, color=C["sram"])
-    _arrow(ax, (5, 5.0), (5, 4.75), lw=1.5, color=C["sram"])
-    _arrow(ax, (5, 3.8), (5, 3.55), lw=1.5, color=C["sram"])
+    label(ax, 0.5, 0.72, "① Load L and Z from HBM", size=9.5, color=GREY)
 
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    arrow(ax, 0.5, 0.72, 0.5, 0.67, BLUE)
+
+    # ── D matrix — BIG red block (proportional to 1.07 GB) ──
+    rect(ax, 0.07, 0.37, 0.86, 0.28, RED_L, RED, lw=3.0, zorder=3)
+    label(ax, 0.5, 0.535, "D = μ + L @ Z", size=13, color=RED, bold=True)
+    label(ax, 0.5, 0.445, "D  [N×S]  =  1.07 GB  written to HBM  ⚠",
+          size=10, color=RED)
+
+    arrow(ax, 0.5, 0.37, 0.5, 0.32, RED, lw=2.5)
+
+    # ── Steps 3 & 4 ──
+    rect(ax, 0.07, 0.22, 0.86, 0.09, WHITE, BLUE, lw=1.5)
+    label(ax, 0.5, 0.265, "③  Re-read D  →  X = min(D, Q)     [1.07 GB re-read]",
+          size=9.5, color="#212121")
+
+    arrow(ax, 0.5, 0.22, 0.5, 0.17, BLUE)
+
+    rect(ax, 0.07, 0.08, 0.86, 0.09, WHITE, BLUE, lw=1.5)
+    label(ax, 0.5, 0.125, "④  Profit [N×S]  written to HBM  →  reduce     [1.07 GB]",
+          size=9.5, color="#212121")
+
+    # ── Footer ──
+    rect(ax, 0.07, 0.03, 0.86, 0.04, "#FFCDD2", RED, lw=2.0, zorder=4)
+    label(ax, 0.5, 0.050,
+          "3 × 1.07 GB HBM round-trips  →  ~3.2 GB  |  180 ms  |  6.1 TFLOPS",
+          size=9, color=RED, bold=True)
+
+    # ══════════════════════════════════════════════════════════
+    # RIGHT — Triton / SRAM
+    # ══════════════════════════════════════════════════════════
+    ax = ax_r
+
+    # HBM outer (thin border — barely used)
+    rect(ax, 0.03, 0.03, 0.94, 0.90, "#F9FBE7", GRN, lw=1.5, alpha=0.6, zorder=1)
+    label(ax, 0.5, 0.91, "HBM  —  reads tile slices of L, Z only",
+          size=10, color=GREY)
+
+    # SRAM container — prominent
+    rect(ax, 0.08, 0.22, 0.84, 0.62, ORG_L, ORG, lw=3.5, zorder=2)
+    label(ax, 0.5, 0.82, "SRAM  —  on-chip  (48 KB per SM on T4)",
+          size=11, color=ORG, bold=True)
+
+    # Tiles inside SRAM (small — proportional to 48 KB)
+    rect(ax, 0.12, 0.68, 0.32, 0.09, GRN_L, GRN, lw=1.5, zorder=3)
+    label(ax, 0.28, 0.725, "L_tile\n[BM×BK]", size=9, color=GRN)
+
+    rect(ax, 0.50, 0.68, 0.32, 0.09, GRN_L, GRN, lw=1.5, zorder=3)
+    label(ax, 0.66, 0.725, "Z_tile\n[BK×BN]", size=9, color=GRN)
+
+    label(ax, 0.5, 0.65, "① K-loop: load tiles → SRAM   ② acc += tl.dot(L_tile, Z_tile)",
+          size=9, color=GREY)
+
+    arrow(ax, 0.5, 0.645, 0.5, 0.60, ORG)
+
+    # Fused compute block (stays in SRAM)
+    rect(ax, 0.12, 0.38, 0.76, 0.21, GRN_L, GRN, lw=2.5, zorder=3)
+    label(ax, 0.5, 0.525, "③  D = max(μ + acc, 0)     X = min(D, Q)", size=11,
+          color=GRN, bold=True)
+    label(ax, 0.5, 0.445, "profit = p·X  −  c·Q  +  s·(Q − D)⁺       all in SRAM",
+          size=9.5, color=GRN)
+
+    arrow(ax, 0.5, 0.38, 0.5, 0.33, ORG)
+
+    # Step 4
+    rect(ax, 0.12, 0.24, 0.76, 0.08, GRN_L, GRN, lw=1.5, zorder=3)
+    label(ax, 0.5, 0.280, "④  partial_mean = sum(profit) / S  —  SRAM reduction",
+          size=9.5, color=GRN)
+
+    # Arrow out of SRAM → tiny output
+    arrow(ax, 0.5, 0.22, 0.5, 0.17, GRN, lw=2.5)
+
+    # Output: only 8 KB
+    rect(ax, 0.20, 0.09, 0.60, 0.08, GRN_M, GRN, lw=2.0, zorder=4)
+    label(ax, 0.5, 0.130, "tl.atomic_add → out[N]   (8 KB written to HBM)",
+          size=10, color=GRN, bold=True)
+
+    # Footer
+    rect(ax, 0.07, 0.03, 0.86, 0.04, GRN_M, GRN, lw=2.0, zorder=4)
+    label(ax, 0.5, 0.050,
+          "D [N×S] never materialised  →  1.07 GB saved  |  70 ms  |  15.7 TFLOPS",
+          size=9, color=GRN, bold=True)
+
     fig.savefig(OUT_DIR / "memory_hierarchy.png", bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+                dpi=dpi, facecolor=BG)
     plt.close(fig)
     print("  [4/6] memory_hierarchy.png")
 
