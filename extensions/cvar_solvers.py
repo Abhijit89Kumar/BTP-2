@@ -198,7 +198,7 @@ class PyTorchCVaR:
         self._compiled_fn: Optional[object] = None
 
     @staticmethod
-    def _cvar_forward(
+    def _profit_forward(
         L: torch.Tensor,
         Z: torch.Tensor,
         mu: torch.Tensor,
@@ -206,12 +206,15 @@ class PyTorchCVaR:
         c: torch.Tensor,
         s: torch.Tensor,
         Q: torch.Tensor,
-        alpha: float,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
-        Compute expected profit, VaR, and CVaR using standard torch ops.
+        Compute the per-scenario profit matrix using standard torch ops.
 
-        Returns (expected_profit [N], VaR [N], CVaR [N]).
+        Returns profit [N, S].
+
+        NOTE: torch.quantile is NOT compile-safe (Dynamo cannot handle
+        symbolic sizes in quantile), so VaR/CVaR are computed outside
+        the compiled region.
         """
         # Correlated demand [N, S]
         D = mu + torch.mm(L, Z)
@@ -224,7 +227,11 @@ class PyTorchCVaR:
         overage = torch.clamp(Q - D, min=0.0)
         profit = (p * X) - (c * Q) + (s * overage)
 
-        # Expected profit
+        return profit
+
+    @staticmethod
+    def _compute_cvar(profit: torch.Tensor, alpha: float):
+        """Compute E[profit], VaR, CVaR from the profit matrix (NOT compiled)."""
         expected_profit = profit.mean(dim=1)                          # [N]
 
         # VaR: alpha-quantile (smallest alpha fraction)
@@ -232,7 +239,6 @@ class PyTorchCVaR:
 
         # CVaR: mean of profits <= VaR
         mask = profit <= VaR[:, None]                                 # [N, S]
-        # Replace profits above VaR with 0, then compute sum / count
         masked_profit = torch.where(mask, profit, torch.zeros_like(profit))
         count = mask.float().sum(dim=1).clamp(min=1.0)               # [N]
         CVaR = masked_profit.sum(dim=1) / count                      # [N]
@@ -252,9 +258,8 @@ class PyTorchCVaR:
 
         alpha = self.alpha
 
-        # Optionally compile (default inductor mode -- no CUDA graphs so
-        # memory tracking via max_memory_allocated works correctly).
-        fn = self._cvar_forward
+        # Only compile the profit computation (quantile is NOT compile-safe)
+        fn = self._profit_forward
         if self.use_compile and self._compiled_fn is None:
             self._compiled_fn = torch.compile(fn, backend="inductor")
         if self.use_compile:
@@ -262,16 +267,20 @@ class PyTorchCVaR:
 
         # Warm-up (JIT compile on first call)
         if device.type == "cuda":
-            _ = fn(L, Z, mu, p, c, s, Q, alpha)
+            profit_warmup = fn(L, Z, mu, p, c, s, Q)
+            _ = self._compute_cvar(profit_warmup, alpha)
             torch.cuda.synchronize()
+            del profit_warmup
 
         # Memory measurement
         if device.type == "cuda":
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device)
-            _ = fn(L, Z, mu, p, c, s, Q, alpha)
+            profit_mem = fn(L, Z, mu, p, c, s, Q)
+            _ = self._compute_cvar(profit_mem, alpha)
             torch.cuda.synchronize()
             peak_mem = torch.cuda.max_memory_allocated(device)
+            del profit_mem
         else:
             peak_mem = 0
 
@@ -281,7 +290,9 @@ class PyTorchCVaR:
             end_event   = torch.cuda.Event(enable_timing=True)
             start_event.record()
 
-        expected_profit, VaR, CVaR = fn(L, Z, mu, p, c, s, Q, alpha)
+        profit = fn(L, Z, mu, p, c, s, Q)
+        expected_profit, VaR, CVaR = self._compute_cvar(profit, alpha)
+        del profit
 
         if device.type == "cuda":
             end_event.record()
