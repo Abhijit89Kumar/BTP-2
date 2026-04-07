@@ -51,7 +51,7 @@ def _build_q_ratios(grid_cfg: GridSearchConfig) -> np.ndarray:
         grid_cfg.q_ratio_min,
         grid_cfg.q_ratio_max,
         grid_cfg.K,
-        dtype=np.float64,
+        dtype=np.float32,
     )
 
 
@@ -77,13 +77,13 @@ class CPUGridSearch:
     def solve(
         self, bundle: TensorBundle, grid_cfg: GridSearchConfig
     ) -> GridSearchResult:
-        # Move to CPU NumPy
-        L  = bundle.L.cpu().numpy()
-        Z  = bundle.Z.cpu().numpy()
-        mu = bundle.mu.cpu().numpy()    # [N, 1]
-        p  = bundle.p.cpu().numpy()     # [N, 1]
-        c  = bundle.c.cpu().numpy()     # [N, 1]
-        s  = bundle.s.cpu().numpy()     # [N, 1]
+        # Move to CPU NumPy (float32 to halve RAM usage)
+        L  = bundle.L.cpu().float().numpy()
+        Z  = bundle.Z.cpu().float().numpy()
+        mu = bundle.mu.cpu().float().numpy()    # [N, 1]
+        p  = bundle.p.cpu().float().numpy()     # [N, 1]
+        c  = bundle.c.cpu().float().numpy()     # [N, 1]
+        s  = bundle.s.cpu().float().numpy()     # [N, 1]
 
         K = grid_cfg.K
         N, S = bundle.N, bundle.S
@@ -97,7 +97,7 @@ class CPUGridSearch:
         np.maximum(D, 0.0, out=D)
 
         # 2. Evaluate profit at each grid point
-        profit_surface = np.empty((N, K), dtype=np.float64)
+        profit_surface = np.empty((N, K), dtype=np.float32)
 
         for k in range(K):
             Q_val = mu * q_ratios[k]                          # [N, 1]
