@@ -75,21 +75,28 @@ class M5TopologyExtractor:
     """
     Extracts a realistic hierarchical correlation matrix from the M5 dataset.
 
-    If the M5 parquet / CSV files are available locally, the extractor reads
-    actual sales and computes the empirical correlation.  Otherwise it falls
-    back to a *synthetic hierarchical block-correlation* matrix that mirrors
-    the M5 structure (3 categories × 7 departments × 10 stores).
+    The extractor reads actual daily unit-sales from the M5 Kaggle competition
+    (``sales_train_evaluation.csv``) and computes the empirical Pearson
+    correlation across store-product nodes.  If the file is not present
+    locally, it is **automatically downloaded** via ``kagglehub``.
 
     Why M5?
     --------
     M5 provides **real-world spatial correlation** between store-product
     pairs driven by geography, promotions, and category affinity — exactly
     the kind of demand coupling we need for a multi-echelon network.
+
+    Prerequisites
+    -------------
+    * ``pip install kagglehub``
+    * A valid Kaggle account that has accepted the M5 competition rules.
+    * Kaggle credentials available as either:
+      - ``~/.kaggle/kaggle.json``, **or**
+      - ``KAGGLE_USERNAME`` + ``KAGGLE_KEY`` environment variables.
     """
 
-    M5_CATEGORIES = 3
-    M5_DEPARTMENTS = 7
-    M5_STORES = 10
+    M5_COMPETITION = "m5-forecasting-accuracy"
+    M5_FILENAME = "sales_train_evaluation.csv"
 
     def __init__(self, data_dir: Optional[str] = None) -> None:
         self.data_dir = Path(data_dir) if data_dir else Path("data/m5")
@@ -97,16 +104,65 @@ class M5TopologyExtractor:
     # ------------------------------------------------------------------
     def extract_correlation(self, N: int, seed: int = 42) -> np.ndarray:
         """
-        Return an N×N positive-definite correlation matrix.
+        Return an N×N positive-definite correlation matrix from real M5 data.
 
-        Tries to load real M5 data first; falls back to synthetic.
+        Downloads the dataset automatically if not found locally.
         """
-        m5_path = self.data_dir / "sales_train_evaluation.csv"
-        if m5_path.exists():
-            logger.info("Loading real M5 sales data from %s", m5_path)
-            return self._from_real_m5(m5_path, N, seed)
-        logger.info("M5 data not found — generating synthetic hierarchical Σ")
-        return self._synthetic_hierarchical(N, seed)
+        m5_path = self._ensure_m5_data()
+        logger.info("Loading M5 sales data from %s", m5_path)
+        return self._from_real_m5(m5_path, N, seed)
+
+    # ------------------------------------------------------------------
+    def _ensure_m5_data(self) -> Path:
+        """Locate the M5 CSV locally or download it via kagglehub."""
+        local_path = self.data_dir / self.M5_FILENAME
+        if local_path.exists():
+            logger.info("M5 data found at %s", local_path)
+            return local_path
+
+        # --- Auto-download via kagglehub ---
+        logger.info(
+            "M5 data not found at %s — downloading via kagglehub ...",
+            local_path,
+        )
+        try:
+            import kagglehub  # type: ignore
+
+            dl_path_str = kagglehub.competition_download(
+                self.M5_COMPETITION,
+                path=self.M5_FILENAME,
+            )
+            dl_path = Path(dl_path_str)
+            # kagglehub may return the directory or the file itself
+            if dl_path.is_dir():
+                dl_path = dl_path / self.M5_FILENAME
+            if dl_path.exists():
+                logger.info("M5 data downloaded successfully: %s", dl_path)
+                return dl_path
+            raise FileNotFoundError(
+                f"kagglehub returned {dl_path_str} but "
+                f"{self.M5_FILENAME} was not found there."
+            )
+        except ImportError:
+            raise RuntimeError(
+                "Package 'kagglehub' is required to auto-download the M5 "
+                "dataset but is not installed.\n"
+                "  → pip install kagglehub"
+            ) from None
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to download M5 dataset via kagglehub: {exc}\n\n"
+                "Please ensure:\n"
+                "  1. 'kagglehub' is installed  (pip install kagglehub)\n"
+                "  2. You have accepted the M5 competition rules at:\n"
+                "     https://www.kaggle.com/competitions/m5-forecasting-accuracy/rules\n"
+                "  3. Kaggle credentials are available:\n"
+                "     • ~/.kaggle/kaggle.json, OR\n"
+                "     • KAGGLE_USERNAME + KAGGLE_KEY env vars\n\n"
+                "Alternatively, download 'sales_train_evaluation.csv' manually from:\n"
+                "  https://www.kaggle.com/competitions/m5-forecasting-accuracy/data\n"
+                f"and place it in: {self.data_dir}/"
+            ) from exc
 
     # ------------------------------------------------------------------
     def _from_real_m5(self, path: Path, N: int, seed: int) -> np.ndarray:
@@ -133,47 +189,6 @@ class M5TopologyExtractor:
 
         corr = np.corrcoef(sampled)
         return self._regularise(corr, N)
-
-    # ------------------------------------------------------------------
-    def _synthetic_hierarchical(self, N: int, seed: int) -> np.ndarray:
-        """
-        Build a block-structured correlation matrix that mimics M5 hierarchy:
-
-            Same store, same dept  → ρ = 0.70
-            Same store, diff dept  → ρ = 0.40
-            Diff store, same dept  → ρ = 0.25
-            Diff store, diff dept  → ρ = 0.10
-
-        Then add a small random perturbation for realism.
-        """
-        rng = np.random.default_rng(seed)
-        R = np.eye(N, dtype=np.float64)
-
-        # Assign each node a (store, dept) label round-robin
-        n_stores = self.M5_STORES
-        n_depts = self.M5_DEPARTMENTS
-        stores = np.arange(N) % n_stores
-        depts = (np.arange(N) // n_stores) % n_depts
-
-        for i in range(N):
-            for j in range(i + 1, N):
-                same_store = stores[i] == stores[j]
-                same_dept = depts[i] == depts[j]
-                if same_store and same_dept:
-                    rho = 0.70
-                elif same_store:
-                    rho = 0.40
-                elif same_dept:
-                    rho = 0.25
-                else:
-                    rho = 0.10
-                # Small perturbation
-                rho += rng.uniform(-0.03, 0.03)
-                rho = np.clip(rho, 0.01, 0.99)
-                R[i, j] = rho
-                R[j, i] = rho
-
-        return self._regularise(R, N)
 
     # ------------------------------------------------------------------
     @staticmethod

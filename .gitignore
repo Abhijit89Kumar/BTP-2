@@ -1,2 +1,17 @@
 *.pyc
 __pycache__/
+
+# Kaggle credentials (NEVER commit)
+kaggle.json
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.lof
+*.lot
+*.nav
+*.out
+*.snm
+*.toc
