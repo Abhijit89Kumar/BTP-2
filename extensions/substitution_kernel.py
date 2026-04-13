@@ -38,7 +38,6 @@ Both kernels share the same autotune configuration space, targeting the T4's
 
 from __future__ import annotations
 
-import math
 from typing import Optional
 
 import torch

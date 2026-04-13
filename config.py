@@ -9,7 +9,7 @@ here so that every other module imports a single source of truth.
 from __future__ import annotations
 
 import torch
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
@@ -102,29 +102,21 @@ class FinancialParams:
     gen_failure_rate_mu:   tuple[float, float] = (0.02, 0.08)
     gen_failure_corr:      float = 0.35   # inter-location failure correlation
 
+    # Safety clamps applied after random generation
+    min_margin_ratio:      float = 1.15   # p >= c * min_margin_ratio
+    max_salvage_ratio:     float = 0.25   # s <= c * max_salvage_ratio
+
 
 # ---------------------------------------------------------------------------
 # Triton kernel tuning search space
 # ---------------------------------------------------------------------------
 @dataclass
-class TritonTuningConfig:
+class BisectionConfig:
     """
-    Defines the autotune search grid passed to ``@triton.autotune``.
-
-    Block sizes are chosen so that:
-        BLOCK_SIZE_M * BLOCK_SIZE_K  fits a tile of L in SRAM,
-        BLOCK_SIZE_K * BLOCK_SIZE_N  fits a tile of Z in SRAM,
-    and the fp32 accumulator of shape [BLOCK_SIZE_M, BLOCK_SIZE_N] also fits.
-
-    A100/H100 SM has ~228 KB shared memory; each fp32 element = 4 B.
-    Tile budget ≈ 228 KB / 4 B ≈ 57 344 elements split across L-tile,
-    Z-tile, and accumulator.
+    Controls Lagrangian bisection in the budget-constrained extension.
     """
-    block_m_options: list[int] = field(default_factory=lambda: [32, 64, 128])
-    block_n_options: list[int] = field(default_factory=lambda: [64, 128, 256])
-    block_k_options: list[int] = field(default_factory=lambda: [32, 64])
-    num_warps_options: list[int] = field(default_factory=lambda: [4, 8])
-    num_stages_options: list[int] = field(default_factory=lambda: [2, 3, 4])
+    lambda_hi_init: float = 10.0     # initial upper bound for bisection
+    expand_threshold: float = 0.95   # expand lambda_hi when lam >= this * lambda_hi
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +161,7 @@ class SubstitutionConfig:
 # ---------------------------------------------------------------------------
 DEFAULT_CONFIG       = NewsvendorConfig()
 DEFAULT_FINANCE      = FinancialParams()
-DEFAULT_TRITON       = TritonTuningConfig()
+DEFAULT_BISECTION    = BisectionConfig()
 DEFAULT_GRID_SEARCH  = GridSearchConfig()
 DEFAULT_CVAR         = CVaRConfig()
 DEFAULT_BUDGET       = BudgetConfig()

@@ -184,6 +184,12 @@ class M5TopologyExtractor:
 
         # Pad / tile to exactly N rows if dataset is smaller
         if sampled.shape[0] < N:
+            logger.warning(
+                "M5 dataset has only %d rows but N=%d requested. "
+                "Tiling rows to fill — correlation matrix will contain "
+                "repeated structure.",
+                sampled.shape[0], N,
+            )
             repeats = (N // sampled.shape[0]) + 1
             sampled = np.tile(sampled, (repeats, 1))[:N]
 
@@ -294,8 +300,8 @@ class FinancialTensorGenerator:
         s[N_t:] = rng.uniform(*self.fin.gen_salvage_value, size=N_g)
 
         # Sanity: selling price > cost > salvage
-        p = np.maximum(p, c * 1.15)   # at least 15 % margin
-        s = np.minimum(s, c * 0.25)   # salvage ≤ 25 % of cost
+        p = np.maximum(p, c * self.fin.min_margin_ratio)
+        s = np.minimum(s, c * self.fin.max_salvage_ratio)
 
         return p, c, s
 

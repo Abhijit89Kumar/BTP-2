@@ -119,8 +119,8 @@ class _LagrangianSolver:
             )
 
         # Bisection: find λ such that Σ c_i · Q_i*(λ) ≈ B
-        best_result = None
-        best_lambda = 0.0
+        final_result = None
+        final_lambda = 0.0
         peak_mem = result_0.peak_memory_bytes
 
         for iteration in range(max_iter):
@@ -138,8 +138,8 @@ class _LagrangianSolver:
             total_cost = _compute_total_cost(result.Q_star, bundle.c)
             cost_history.append(total_cost)
 
-            best_result = result
-            best_lambda = lam
+            final_result = result
+            final_lambda = lam
 
             # Bisection update
             if total_cost > B * (1 + tol):
@@ -157,16 +157,16 @@ class _LagrangianSolver:
 
         wall_ms = (time.perf_counter() - t0) * 1e3
 
-        final_cost = _compute_total_cost(best_result.Q_star, bundle.c)
+        final_cost = _compute_total_cost(final_result.Q_star, bundle.c)
 
         return BudgetResult(
-            expected_profit=best_result.expected_profit,
+            expected_profit=final_result.expected_profit,
             wall_time_ms=wall_ms,
             peak_memory_bytes=peak_mem,
             label=self.label,
-            Q_star=best_result.Q_star,
-            best_profit=best_result.best_profit,
-            lambda_star=best_lambda,
+            Q_star=final_result.Q_star,
+            best_profit=final_result.best_profit,
+            lambda_star=final_lambda,
             total_cost=final_cost,
             budget=B,
             lambda_history=lambda_history,

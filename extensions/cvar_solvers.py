@@ -290,6 +290,7 @@ class PyTorchCVaR:
             end_event   = torch.cuda.Event(enable_timing=True)
             start_event.record()
 
+        t0 = time.perf_counter()
         profit = fn(L, Z, mu, p, c, s, Q)
         expected_profit, VaR, CVaR = self._compute_cvar(profit, alpha)
         del profit
@@ -299,8 +300,7 @@ class PyTorchCVaR:
             torch.cuda.synchronize()
             wall_ms = start_event.elapsed_time(end_event)
         else:
-            wall_ms = 0.0
-            peak_mem = 0
+            wall_ms = (time.perf_counter() - t0) * 1e3
 
         return CVaRResult(
             expected_profit=expected_profit.detach(),
