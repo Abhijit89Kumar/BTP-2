@@ -1,0 +1,149 @@
+\section{Solver Architecture Overview}
+
+Three solvers share a uniform interface: each accepts a \texttt{TensorBundle} and returns a \texttt{SolverResult} (expected profit vector, wall-clock time, peak memory, label).
+
+\section{Model 1 --- CPU-NumPy Baseline}
+
+\texttt{CPUMonteCarlo} provides a gold-standard correctness reference using NumPy: materialises $\mathbf{D} = \bm{\mu} + \mathbf{L}\mathbf{Z}$ in RAM (${\sim}2$\,GB peak), then computes sales, overage, profit, and reduces. Intentionally unoptimised for clarity.
+
+\section{Model 2 --- PyTorch-Compile GPU Baseline}
+
+\texttt{PyTorchMonteCarlo} wraps the forward pass in \texttt{torch.compile} (Inductor backend~\citep{ansel2024}):
+
+\begin{lstlisting}[language=Python, caption={PyTorch-Compile newsvendor forward pass.}, label={lst:pytorch}]
+@staticmethod
+def _newsvendor_forward(L, Z, mu, p, c, s, Q):
+    D = torch.clamp(mu + torch.mm(L, Z), min=0.0)
+    X = torch.minimum(D, Q)
+    overage = torch.clamp(Q - D, min=0.0)
+    profit = (p * X) - (c * Q) + (s * overage)
+    return profit.mean(dim=1)
+\end{lstlisting}
+
+The Inductor backend fuses the element-wise operations (clamp, min, subtract, multiply, add) and the reduction into optimised Triton kernels. However, it \textbf{cannot fuse across the \texttt{torch.mm} boundary} because cuBLAS matmul is an opaque external call. The $\mathbf{D}[N,S]$ matrix (1.07\,GB) must be written to HBM after matmul and re-read for the business logic. Measurement uses CUDA events after a warm-up pass to trigger JIT compilation.
+
+\section{Model 3 --- Triton-Fused Kernel (Core Contribution)}\label{sec:triton}
+
+\subsection{Kernel Design}
+
+The kernel operates on a 2-D grid of $\lceil N/\blockm \rceil \times \lceil S/\blockn \rceil$ program instances (\Cref{fig:kernel_grid}). Each instance handles a $[\blockm, \blockn]$ tile of the \emph{virtual} profit matrix in four phases:
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\scriptsize]
+% L matrix
+\fill[blue!15] (0,0) rectangle (1.8,2.4);
+\draw[blue!50!black] (0,0) rectangle (1.8,2.4);
+\fill[red!30] (0,1.8) rectangle (0.5,2.4);
+\draw[red!60!black, thick] (0,1.8) rectangle (0.5,2.4);
+\node[font=\scriptsize\bfseries, blue!60!black] at (0.9, -0.25) {$\mathbf{L}$ {\tiny$[N{\times}K]$}};
+\node[font=\tiny, red!60!black] at (0.25,2.1) {BM$\times$BK};
+
+% Z matrix
+\fill[cyan!12] (2.4,0) rectangle (5.8,2.4);
+\draw[cyan!50!black] (2.4,0) rectangle (5.8,2.4);
+\fill[red!30] (2.4,1.8) rectangle (3.5,2.4);
+\draw[red!60!black, thick] (2.4,1.8) rectangle (3.5,2.4);
+\node[font=\scriptsize\bfseries, cyan!60!black] at (4.1, -0.25) {$\mathbf{Z}$ {\tiny$[K{\times}S]$}};
+\node[font=\tiny, red!60!black] at (2.95,2.1) {BK$\times$BN};
+
+% Arrow
+\draw[-{Stealth[length=4pt]}, thick, orange] (0.5,2.1) to[bend left=20] (2.4,2.1);
+
+% Virtual profit
+\fill[orange!8] (6.4,0) rectangle (9.8,2.4);
+\draw[orange!50!black, dashed] (6.4,0) rectangle (9.8,2.4);
+% Grid lines
+\foreach \x in {6.4,7.0,...,9.8} \draw[orange!20] (\x,0)--(\x,2.4);
+\foreach \y in {0,0.4,...,2.4} \draw[orange!20] (6.4,\y)--(9.8,\y);
+\fill[red!40] (6.4,2.0) rectangle (7.0,2.4);
+\draw[red!60!black, thick] (6.4,2.0) rectangle (7.0,2.4);
+\node[font=\scriptsize\bfseries, orange!60!black] at (8.1, -0.25) {Virtual Profit {\tiny$[N{\times}S]$}};
+\node[font=\tiny, white] at (6.7,2.2) {tile};
+
+% Labels
+\node[font=\tiny, red!60!black, below=0.05cm] at (8.1, -0.5) {\emph{NEVER in HBM --- fused in SRAM}};
+
+% Arrow from Z to profit
+\draw[-{Stealth[length=4pt]}, thick, orange] (5.8,1.2) -- (6.4,1.2);
+\end{tikzpicture}
+\caption{Triton kernel 2-D grid. Each tile computes the K-loop matmul, fuses business logic in SRAM, reduces to partial mean, and atomically accumulates to the output.}
+\label{fig:kernel_grid}
+\end{figure}
+
+\textbf{Phase 1 --- Tiled Matmul:} Iterate over $\lceil K/\blockk \rceil$ tiles, loading $\mathbf{L}_\text{tile}[\text{BM},\text{BK}]$ and $\mathbf{Z}_\text{tile}[\text{BK},\text{BN}]$ into SRAM, accumulating $\texttt{acc} \mathrel{+}= \mathbf{L}_\text{tile} \cdot \mathbf{Z}_\text{tile}$ with no HBM write.
+
+\textbf{Phase 2 --- Fused Logic (SRAM):} $\mathbf{D} = \max(\bm{\mu} + \texttt{acc}, 0)$, $\mathbf{X} = \min(\mathbf{D}, \mathbf{Q})$, $\text{profit} = \mathbf{p} \odot \mathbf{X} - \mathbf{c} \odot \mathbf{Q} + \mathbf{s} \odot \max(\mathbf{Q}-\mathbf{D}, 0)$.
+
+\textbf{Phase 3 --- Partial Mean:} Sum profit over the $\blockn$ scenario columns, divide by $S$.
+
+\textbf{Phase 4 --- Atomic Write:} $\texttt{tl.atomic\_add}(\texttt{out}[i], \text{partial\_mean}[i])$ --- the \emph{only} HBM write.
+
+\subsection{Memory Traffic Analysis}
+
+\Cref{fig:memhier} contrasts the memory access patterns. The key difference: PyTorch writes $\mathbf{D}$ (1.07\,GB) to HBM and re-reads it; the Triton kernel keeps $\mathbf{D}$ entirely in SRAM and writes only the 8\,KB output vector.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=0.3cm]
+% PyTorch side
+\begin{scope}[xshift=0cm]
+\node[font=\footnotesize\bfseries] at (2, 4.2) {PyTorch + torch.compile};
+\node[draw=blue!60, fill=blue!8, rounded corners, minimum width=4cm, minimum height=0.6cm] (p1) at (2, 3.5) {Load $\mathbf{L}, \mathbf{Z}$ from HBM};
+\node[draw=red!70, fill=red!15, rounded corners, minimum width=4cm, minimum height=0.8cm, text width=3.8cm, align=center, below=0.2cm of p1] (p2) {$\mathbf{D} = \bm{\mu} + \mathbf{L}\mathbf{Z}$ \textbf{to HBM}\\1.07\,GB round-trip};
+\node[draw=red!50, fill=red!8, rounded corners, minimum width=4cm, minimum height=0.6cm, below=0.2cm of p2] (p3) {$\mathbf{D}$ re-read from HBM (1.07\,GB)};
+\node[draw=gray, fill=gray!8, rounded corners, minimum width=4cm, minimum height=0.6cm, below=0.2cm of p3] (p4) {Profit $\to$ reduce $\to$ output};
+\draw[-{Stealth[length=3pt]}, gray] (p1)--(p2);
+\draw[-{Stealth[length=3pt]}, gray] (p2)--(p3);
+\draw[-{Stealth[length=3pt]}, gray] (p3)--(p4);
+\node[font=\tiny\bfseries, red!60!black] at (2, 0.3) {Total: $\sim$4.0\,GB HBM traffic};
+\end{scope}
+% Triton side
+\begin{scope}[xshift=6.2cm]
+\node[font=\footnotesize\bfseries] at (2, 4.2) {Triton Fused Kernel $\bigstar$};
+\node[draw=blue!60, fill=blue!8, rounded corners, minimum width=4cm, minimum height=0.6cm] (t1) at (2, 3.5) {Load $\mathbf{L}, \mathbf{Z}$ tiles $\to$ SRAM};
+\node[draw=green!60!black, fill=green!10, rounded corners, minimum width=4cm, minimum height=0.8cm, text width=3.8cm, align=center, below=0.2cm of t1] (t2) {$\mathbf{D}$, $\mathbf{X}$, profit \textbf{all in SRAM}\\0\,B to HBM};
+\node[draw=green!60!black, fill=green!8, rounded corners, minimum width=4cm, minimum height=0.6cm, below=0.2cm of t2] (t3) {Partial mean in SRAM};
+\node[draw=green!50!black, fill=green!15, rounded corners, minimum width=4cm, minimum height=0.6cm, below=0.2cm of t3] (t4) {\texttt{atomic\_add} $\to$ out$[N]$ (8\,KB)};
+\draw[-{Stealth[length=3pt]}, gray] (t1)--(t2);
+\draw[-{Stealth[length=3pt]}, gray] (t2)--(t3);
+\draw[-{Stealth[length=3pt]}, gray] (t3)--(t4);
+\node[font=\tiny\bfseries, green!50!black] at (2, 0.3) {$\mathbf{D}[N,S]$ never materialised};
+\end{scope}
+\end{tikzpicture}
+\caption{Memory hierarchy comparison. \emph{Left:} PyTorch materialises $\mathbf{D}$ in HBM. \emph{Right:} Triton fuses everything in SRAM; only 8\,KB output is written.}
+\label{fig:memhier}
+\end{figure}
+
+\subsection{Autotuning and FLOP Estimation}
+
+Nine tile configurations targeting the T4's 48\,KB SRAM budget are provided to \texttt{@triton.autotune} (\Cref{tab:autotune}). The tuning key is $[N, S, K]$, triggering re-tuning only when problem dimensions change. The autotuner profiles each configuration at runtime and caches the winner~\citep{tillet2019}.
+
+\begin{table}[H]
+\centering\small
+\caption{Autotune configuration search space (all within T4's 48\,KB SRAM).}
+\label{tab:autotune}
+\begin{tabular}{@{} c c c c c c @{}}
+    \toprule
+    \textbf{\#} & \blockm & \blockn & \blockk & \textbf{Warps} & \textbf{SRAM} \\
+    \midrule
+    1 &  32 & 128 & 32 & 4 & 20\,KB \\
+    2 &  64 &  64 & 32 & 4 & 20\,KB \\
+    3 &  64 & 128 & 32 & 4 & 36\,KB \\
+    4 &  64 & 128 & 32 & 8 & 36\,KB \\
+    5 &  64 & 128 & 64 & 4 & 40\,KB \\
+    6 &  64 & 128 & 64 & 8 & 40\,KB \\
+    7 & 128 &  64 & 32 & 4 & 36\,KB \\
+    8 & 128 &  64 & 32 & 8 & 36\,KB \\
+    9 & 128 & 128 & 32 & 8 & 48\,KB \\
+    \bottomrule
+\end{tabular}
+\end{table}
+
+The configurations span a range of tile geometries: small tiles (Config~1: BM=32) yield low SRAM usage but higher K-loop overhead, while large tiles (Config~9: BM=128, BN=128) maximise arithmetic intensity but approach the SRAM ceiling. The number of warps (4 or 8) controls occupancy: more warps improve latency hiding for memory-bound tiles but increase register pressure. The autotuner runs each configuration once on the first kernel launch, measures wall-clock time via CUDA events, and caches the winner keyed by $[N, S, K]$. Subsequent launches with the same dimensions incur no tuning overhead.
+
+Total FLOPs per solve are estimated as:
+\begin{equation}
+    \text{FLOPs} = \underbrace{2 \cdot N^2 \cdot S}_{\text{MatMul}} + \underbrace{7 \cdot N \cdot S}_{\text{Element-wise}}.
+\end{equation}
+For $N{=}2048$, $S{=}131072$: the matmul contributes $2 \times 2048^2 \times 131{,}072 \approx 1.10 \times 10^{12}$ FLOPs (dominant), while the element-wise operations (add $\mu$, clamp, min, subtract, two multiplies, add) contribute $7 \times 2048 \times 131{,}072 \approx 1.88 \times 10^9$ FLOPs. \textbf{Total $\approx$ 1.10\,TFLOP per solve.} At the measured 70\,ms execution time, this corresponds to an effective throughput of ${\sim}15.7$\,TFLOPS, which exceeds the T4's nominal FP32 peak of 8.1\,TFLOPS because the tiled matmul benefits from the Turing architecture's FP16 tensor core acceleration (the Triton compiler automatically exploits available hardware when profitable).

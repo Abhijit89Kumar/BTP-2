@@ -1,0 +1,57 @@
+% ============================================================================
+%  Appendix D — Reproducibility Instructions
+% ============================================================================
+
+\section*{Google Colab (Recommended)}
+
+\begin{enumerate}
+    \item Open \texttt{BTP\_Newsvendor\_Full\_Run.ipynb} in Google Colab with a T4 GPU runtime.
+    \item Run all cells sequentially.
+    \item The notebook will:
+    \begin{itemize}[nosep]
+        \item Install dependencies (PyTorch, Triton, NumPy, Pandas, Matplotlib).
+        \item Verify GPU availability and architecture.
+        \item Execute the full data pipeline (correlation extraction, demand mapping, financial tensor generation).
+        \item Run all three base solvers (CPU-NumPy, PyTorch-Compile, Triton-Fused).
+        \item Run all four extension solvers (Grid Search, CVaR, Budget, Substitution).
+        \item Validate numerical correctness via \texttt{torch.allclose}.
+        \item Generate comparison tables and publication-quality plots.
+    \end{itemize}
+\end{enumerate}
+
+\section*{Command-Line Interface}
+
+\begin{lstlisting}[language=bash, frame=single, numbers=none, xleftmargin=0em]
+# Full benchmark (default N=2048, S=131072)
+python benchmark.py
+
+# Scaled-down quick test
+python benchmark.py --N 512 --S 32768
+
+# Generate architecture/system diagrams
+python generate_diagrams.py --dpi 300
+
+# Generate performance plots
+python generate_performance_plots.py
+
+# Launch interactive Gradio web application
+python -m gradio_app.app
+\end{lstlisting}
+
+\section*{Hardware Requirements}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{@{} l l @{}}
+        \toprule
+        \textbf{Component} & \textbf{Requirement} \\
+        \midrule
+        GPU      & NVIDIA with CUDA support (T4 or better) \\
+        VRAM     & $\geq$ 8\,GB (16\,GB recommended for full $N = 2048$) \\
+        RAM      & $\geq$ 8\,GB (for CPU baseline) \\
+        Python   & 3.9+ \\
+        PyTorch  & 2.0+ (with CUDA) \\
+        Triton   & 2.x \\
+        \bottomrule
+    \end{tabular}
+\end{table}

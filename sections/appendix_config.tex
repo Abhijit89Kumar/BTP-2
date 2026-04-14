@@ -1,0 +1,49 @@
+\begin{table}[H]
+\centering\small
+\caption*{Default problem dimensions.}
+\begin{tabular}{@{} l c l @{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Default} & \textbf{Description} \\
+    \midrule
+    $N$ & 2,048 & Product-location nodes \\
+    $S$ & 131,072 & Monte-Carlo scenarios ($2^{17}$) \\
+    seed & 42 & Global RNG seed \\
+    tractor\_fraction & 0.6 & Fraction of tractor nodes \\
+    \bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering\small
+\caption*{Extension configurations.}
+\begin{tabular}{@{} l l c l @{}}
+    \toprule
+    \textbf{Extension} & \textbf{Parameter} & \textbf{Default} & \textbf{Description} \\
+    \midrule
+    Grid Search   & $K$ / $r_{\min}$ / $r_{\max}$ & 64 / 0.3 / 2.5 & Grid points, $Q/\mu$ range \\
+    CVaR          & $\alpha$ / bins              & 0.05 / 256       & Risk level, histogram bins \\
+    Budget        & fraction / iters             & 0.7 / 30         & Budget $B/\sum c\mu$, bisection \\
+    Substitution  & max\_subs / $\beta$          & 4 / [0.05, 0.30] & Substitutes, redirect fraction \\
+    \bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering\small
+\caption*{Autotune configurations (all within T4's 48\,KB SRAM budget).}
+\begin{tabular}{@{} c c c c c c @{}}
+    \toprule
+    \# & BM & BN & BK & Warps & SRAM \\
+    \midrule
+    1 &  32 & 128 & 32 & 4 & 20\,KB \\
+    2 &  64 &  64 & 32 & 4 & 20\,KB \\
+    3 &  64 & 128 & 32 & 4 & 36\,KB \\
+    4 &  64 & 128 & 32 & 8 & 36\,KB \\
+    5 &  64 & 128 & 64 & 4 & 40\,KB \\
+    6 &  64 & 128 & 64 & 8 & 40\,KB \\
+    7 & 128 &  64 & 32 & 4 & 36\,KB \\
+    8 & 128 &  64 & 32 & 8 & 36\,KB \\
+    9 & 128 & 128 & 32 & 8 & 48\,KB \\
+    \bottomrule
+\end{tabular}
+\end{table}

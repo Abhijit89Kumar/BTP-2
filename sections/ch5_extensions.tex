@@ -1,0 +1,33 @@
+Four extensions demonstrate the generality of the kernel fusion paradigm for richer inventory models. Each preserves the core principle: avoid materialising $\mathbf{D}[N,S]$ in HBM.
+
+\section{Optimal Order Quantity Grid Search}\label{sec:ext-grid}
+
+The base kernel evaluates $\E[\pi]$ at $Q_i = \mu_i$. The grid search kernel evaluates $\E[\pi_i(Q)]$ at $K{=}64$ candidate quantities $Q_{i,k} = \mu_i \cdot r_k$ for $r_k \in [0.3, 2.5]$. The key innovation: the expensive matmul (Phase~1) is computed \textbf{once}---the accumulator stays in SRAM while $K$ evaluations of the business logic run in an inner loop. Output: $Q^*[N]$ via $\arg\max_k$, profit surface $[N, K]$.
+
+\section{CVaR Risk-Averse Evaluation}\label{sec:ext-cvar}
+
+CVaR at level $\alpha{=}0.05$ measures the expected profit in the worst 5\% of scenarios~\citep{rockafellar2000}. Rather than sorting $S$ values per product ($\mathcal{O}(S\log S)$), the kernel accumulates a per-product histogram ($B{=}256$ bins) via \texttt{tl.atomic\_add} in an additional \textbf{Phase~3b}. Post-processing walks the histogram CDF to extract VaR and CVaR. No extra SRAM pressure since histogram writes go directly to HBM.
+
+\section{Budget-Constrained Optimisation}\label{sec:ext-budget}
+
+A global procurement budget $\sum c_i Q_i \leq B$ (default: $B = 0.7 \times \sum c_i \mu_i$) is imposed. Solved via bisection on a Lagrange multiplier $\lambda \geq 0$: at each $\lambda$, the grid search runs with effective cost $c' = c(1+\lambda)$; $\lambda$ is updated based on budget violation. Convergence in 15--20 iterations. \textbf{No new Triton kernel}---reuses grid search.
+
+\section{Multi-Product Demand Substitution}\label{sec:ext-sub}
+
+When product $j$ stocks out, fraction $\beta_{ij} \in [0.05, 0.30]$ of unmet demand redirects to substitutes. A \textbf{two-pass} architecture handles cross-product dependencies: Pass~1 (stockout kernel) writes $\text{stockout}[N,S]$ to HBM; Pass~2 recomputes $\mathbf{D}$ via matmul, reads neighbours' stockouts, and computes effective-demand profit. Recomputing the matmul avoids storing the full $\mathbf{D}$ matrix.
+
+\begin{table}[H]
+\centering\small
+\caption{Summary of extensions.}
+\label{tab:extensions}
+\begin{tabular}{@{} l l l @{}}
+    \toprule
+    \textbf{Extension} & \textbf{New Kernel?} & \textbf{Key Innovation} \\
+    \midrule
+    Grid Search   & Yes (1) & K-loop over $Q$ in SRAM \\
+    CVaR          & Yes (1) & Fused histogram accumulation \\
+    Budget        & No      & Lagrangian bisection on grid search \\
+    Substitution  & Yes (2) & Two-pass: stockout $\to$ profit \\
+    \bottomrule
+\end{tabular}
+\end{table}

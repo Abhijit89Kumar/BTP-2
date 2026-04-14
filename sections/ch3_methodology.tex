@@ -1,0 +1,103 @@
+\section{Overview}
+
+The methodology has four stages: (i)~correlation topology extraction, (ii)~demand distribution mapping, (iii)~financial tensor generation, and (iv)~Monte-Carlo simulation with kernel-fused profit computation (\Cref{fig:pipeline}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node distance=0.4cm and 0.5cm,
+    stage/.style={rectangle, rounded corners=2pt, draw=#1!70!black, fill=#1!10, minimum width=2.4cm, minimum height=0.9cm, align=center, font=\scriptsize},
+    arr/.style={-{Stealth[length=4pt]}, thick, draw=gray!60},
+]
+\node[stage=blue] (s1) {\textbf{Stage 1}\\M5 Topology\\$\mathbf{R} \to \bm{\Sigma} \to \mathbf{L}$};
+\node[stage=green, right=0.7cm of s1] (s2) {\textbf{Stage 2}\\Demand Mapping\\$\bm{\mu}[N], \bm{\sigma}[N]$};
+\node[stage=orange, right=0.7cm of s2] (s3) {\textbf{Stage 3}\\Financial Tensors\\$\mathbf{p}, \mathbf{c}, \mathbf{s}$};
+\node[stage=red, right=0.7cm of s3] (s4) {\textbf{Output}\\TensorBundle\\GPU-resident};
+\draw[arr] (s1) -- (s2);
+\draw[arr] (s2) -- (s3);
+\draw[arr] (s3) -- (s4);
+\end{tikzpicture}
+\caption{Four-stage ETL pipeline from raw data to GPU-resident TensorBundle.}
+\label{fig:pipeline}
+\end{figure}
+
+\section{Mathematical Framework}\label{sec:math}
+
+The expected profit for each product-location node $i$ is:
+\begin{equation}\label{eq:expected-profit}
+    \E[\pi_i] = \frac{1}{S} \sum_{s=1}^{S} \Big[ p_i \cdot X_{i,s} - c_i \cdot Q_i + s_i \cdot \max(Q_i - D_{i,s},\, 0) \Big],
+\end{equation}
+where $D_{i,s} = \max(\mu_i + \sum_k L_{ik} Z_{ks},\, 0)$, $X_{i,s} = \min(D_{i,s}, Q_i)$, $Q_i = \mu_i$, and $\mathbf{L}$ is the Cholesky factor of $\bm{\Sigma}$. The five-step computation flow is shown in \Cref{fig:mathflow}.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node distance=0.15cm and 0.35cm,
+    step/.style={rectangle, rounded corners=2pt, draw=#1!70!black, fill=#1!10, minimum width=2.1cm, minimum height=0.75cm, align=center, font=\scriptsize},
+    arr/.style={-{Stealth[length=4pt]}, thick, draw=gray!60},
+]
+\node[step=blue] (c1) {\textbf{Step 1}\\$\bm{\Sigma}=\mathbf{L}\mathbf{L}^\top$};
+\node[step=green, right=0.4cm of c1] (c2) {\textbf{Step 2}\\$\mathbf{D}=\bm{\mu}+\mathbf{L}\mathbf{Z}$};
+\node[step=orange, right=0.4cm of c2] (c3) {\textbf{Step 3}\\$\mathbf{X}=\min(\mathbf{D},\mathbf{Q})$};
+\node[step=red, right=0.4cm of c3] (c4) {\textbf{Step 4}\\$\bm{\pi}=\mathbf{p}\mathbf{X}-\mathbf{c}\mathbf{Q}+\ldots$};
+\node[step=green!60!black, right=0.4cm of c4] (c5) {\textbf{Step 5}\\$\E[\bm{\pi}]=\text{mean}$};
+\draw[arr] (c1)--(c2); \draw[arr] (c2)--(c3); \draw[arr] (c3)--(c4); \draw[arr] (c4)--(c5);
+\draw[dashed, thick, red!60!black, rounded corners=4pt] ([shift={(-0.15,-0.15)}]c2.south west) rectangle ([shift={(0.15,0.15)}]c5.north east);
+\node[font=\scriptsize\itshape, red!60!black, below=0.15cm of c3, xshift=0.8cm] {Fused in Triton kernel (SRAM)};
+\end{tikzpicture}
+\caption{Five-step newsvendor computation flow. Steps 2--5 are fused within the Triton kernel.}
+\label{fig:mathflow}
+\end{figure}
+
+\section{Correlation Topology and Demand Mapping}\label{sec:corr}
+
+The correlation matrix is derived from the \textbf{real M5 Kaggle competition dataset} (\texttt{sales\_train\_evaluation.csv}, auto-downloaded via \texttt{kagglehub}). The pipeline samples $N$ store-product rows, computes the empirical Pearson correlation on the trailing 365~days of daily unit sales, then applies spectral regularisation (eigenvalue clipping at $\varepsilon = 10^{-6}$) to ensure strict positive-definiteness. The Cholesky factor $\mathbf{L}$ is computed in FP64 on CPU for stability~\citep{higham2002}, then cast to FP32.
+
+Tractors (60\% of nodes): $\mu \in [8, 40]$, $\sigma \in [3, 15]$. Generators (40\%): base demand plus a Poisson spare-parts add-on from an installed-base failure model ($\lambda \in [0.02, 0.08]$).
+
+\section{Financial Tensors and GPU Assembly}\label{sec:finance}
+
+Each node in the dealership network is assigned per-unit cost ($c_i$), selling price ($p_i$), and salvage value ($s_i$) drawn uniformly from product-specific ranges. \Cref{tab:financial-ranges} summarises these ranges for the two product categories.
+
+\begin{table}[H]
+\centering
+\caption{Financial parameter ranges by product category.}
+\label{tab:financial-ranges}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Category} & \textbf{Units} & \textbf{Cost $c$} & \textbf{Price $p$} & \textbf{Salvage $s$} \\
+\midrule
+Tractors (60\% of nodes) & INR lakhs & $[4.5,\; 9.0]$ & $[6.0,\; 13.5]$ & $[0.5,\; 1.5]$ \\
+Generators (40\% of nodes) & INR thousands & $[35,\; 80]$ & $[55,\; 120]$ & $[5,\; 15]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two business constraints are enforced during parameter generation to ensure economic realism. First, the \emph{minimum margin constraint} requires $p_i \geq 1.15\, c_i$, guaranteeing at least a 15\% gross margin on every unit sold. Without this constraint, randomly sampled price-cost pairs could produce nodes where selling is barely profitable or even loss-making under the mean scenario, distorting the optimisation landscape. Second, the \emph{salvage cap constraint} requires $s_i \leq 0.25\, c_i$, ensuring that the recovery value of unsold inventory does not exceed 25\% of its cost. This reflects the practical reality that excess inventory---whether tractors sitting in a dealer lot or generators past their warranty window---can only be liquidated at steep discounts. Together, these constraints create a meaningful overage-vs-underage trade-off: the critical ratio $(p_i - c_i)/(p_i - s_i)$ is bounded away from both zero and one, ensuring that the optimal order quantity is neither trivially zero nor unbounded.
+
+The complete set of tensors assembled into the GPU-resident \texttt{TensorBundle} is summarised in \Cref{tab:tensor-inventory}.
+
+\begin{table}[H]
+\centering
+\caption{Tensor inventory in the GPU-resident TensorBundle ($N=2{,}048$, $S=131{,}072$).}
+\label{tab:tensor-inventory}
+\begin{tabular}{llrr}
+\toprule
+\textbf{Tensor} & \textbf{Shape} & \textbf{Elements} & \textbf{Size (FP32)} \\
+\midrule
+$\mathbf{L}$ (Cholesky factor) & $N \times N$ & $4{,}194{,}304$ & 16.0\,MB \\
+$\mathbf{Z}$ (scenario matrix) & $N \times S$ & $268{,}435{,}456$ & 1{,}024\,MB \\
+$\bm{\mu}$ (mean demand) & $N$ & $2{,}048$ & 8\,KB \\
+$\mathbf{p}$ (selling price) & $N$ & $2{,}048$ & 8\,KB \\
+$\mathbf{c}$ (unit cost) & $N$ & $2{,}048$ & 8\,KB \\
+$\mathbf{s}$ (salvage value) & $N$ & $2{,}048$ & 8\,KB \\
+$\mathbf{Q}$ (order quantity) & $N$ & $2{,}048$ & 8\,KB \\
+\midrule
+\multicolumn{3}{l}{\textbf{Total GPU memory}} & $\mathbf{\sim 1{,}040}$\,\textbf{MB} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The scenario matrix $\mathbf{Z} \in \R^{N \times S}$ is generated directly on the GPU using PyTorch's CUDA random number generator, which employs the Philox 4x32-10 counter-based algorithm. Generating $\mathbf{Z}$ on-device via \texttt{torch.randn(..., device='cuda')} avoids a costly host-to-device PCIe transfer of the 1\,GB matrix and ensures that the random state is maintained entirely within GPU memory. The CUDA RNG produces independent standard-normal samples across all $N \times S$ entries in a single kernel launch, with each CUDA thread computing its own subsequence using the Philox counter, guaranteeing both statistical independence and deterministic reproducibility when the manual seed is fixed. All tensors are assembled into an immutable \texttt{TensorBundle} dataclass on the CUDA device, providing a single typed object that is passed to all three solver implementations.
+
+The Monte-Carlo simulation then proceeds by computing correlated demand $\mathbf{D} = \max(\bm{\mu} + \mathbf{L}\mathbf{Z}, 0)$, constrained sales $\mathbf{X} = \min(\mathbf{D}, \mathbf{Q})$, overage $\max(\mathbf{Q} - \mathbf{D}, 0)$, per-scenario profit $\bm{\pi} = \mathbf{p} \odot \mathbf{X} - \mathbf{c} \odot \mathbf{Q} + \mathbf{s} \odot \text{overage}$, and finally the expected profit $\E[\bm{\pi}] = \frac{1}{S}\sum_{s=1}^{S} \bm{\pi}_s$. This sample average approximation (SAA) converges to the true expectation at rate $\mathcal{O}(1/\sqrt{S})$. With $S = 131{,}072$ scenarios, the standard error is reduced by a factor of $\sqrt{131072} \approx 362$ relative to a single sample, providing tight confidence bounds on the expected profit estimate. The three solver implementations described in the next chapter differ in how they execute this computation---on CPU with NumPy, on GPU with standard PyTorch, or on GPU with the proposed SRAM-fused Triton kernel.

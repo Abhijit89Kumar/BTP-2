@@ -1,0 +1,86 @@
+\section{Background}\label{sec:background}
+
+Inventory management is a critical operational decision in manufacturing and retail~\citep{silver2017}. The \emph{Newsvendor Problem}~\citep{arrow1951, porteus2002} formalises the trade-off between under-ordering (lost sales) and over-ordering (excess inventory) under stochastic demand. In practice, modern supply chains are multi-echelon, with spatially correlated demand across nodes~\citep{clark1960, graves2000}. Ignoring these correlations leads to suboptimal ordering policies and profit erosion.
+
+\section{Problem Statement}\label{sec:problem}
+
+This thesis addresses the Multi-Echelon Stochastic Newsvendor Problem for a dealership network of tractors and generators across $N = 2{,}048$ nodes with $S = 131{,}072$ Monte-Carlo scenarios. The intermediate demand matrix $\mathbf{D} = \bm{\mu} + \mathbf{L}\mathbf{Z}$ occupies ${\sim}1.07$\,GB in FP32, creating a memory bandwidth bottleneck~\citep{ivanov2021} when materialised in HBM by standard frameworks like PyTorch~\citep{paszke2019}.
+
+\section{Motivation and Objectives}\label{sec:motivation}
+
+Inspired by FlashAttention's~\citep{dao2022} strategy of fusing matmul with downstream operations within SRAM, we apply kernel fusion to inventory optimisation. The objectives are: (i)~design a custom Triton kernel fusing demand generation, newsvendor profit, and reduction into a single pass; (ii)~develop a realistic data pipeline using M5 dataset~\citep{makridakis2022} correlations; (iii)~benchmark against CPU-NumPy and \texttt{torch.compile} baselines; (iv)~develop four extensions (grid search, CVaR, budget, substitution); (v)~demonstrate GPU portability via autotuning.
+
+\section{System Architecture}\label{sec:sysarch}
+
+The system comprises five modules (\Cref{fig:sysarch}): centralised configuration, a four-stage ETL pipeline, two baseline solvers, the fused Triton kernel, and a benchmarking suite.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.2cm and 1.8cm, font=\small]
+
+% --- Styles (no #1 to avoid Beamer-like issues) ---
+\tikzset{
+    modbox/.style={rectangle, rounded corners=4pt, minimum width=3.6cm, minimum height=1.4cm, align=center, thick, text width=3.4cm},
+}
+
+% --- Row 1: Config (top centre) ---
+\node[modbox, draw=blue!60!black, fill=blue!6] (cfg) {
+    \textbf{\textsf{config.py}}\\[2pt]
+    {\scriptsize NewsvendorConfig}\\[-1pt]
+    {\scriptsize FinancialParams}\\[-1pt]
+    {\scriptsize TritonTuningConfig}
+};
+\node[font=\scriptsize\bfseries, text=blue!60!black, above=0.1cm of cfg] {CONFIGURATION};
+
+% --- Row 2: Pipeline (left) and Baselines (right) ---
+\node[modbox, draw=green!50!black, fill=green!6, below left=1.4cm and 1.0cm of cfg] (pipe) {
+    \textbf{\textsf{data\_pipeline.py}}\\[2pt]
+    {\scriptsize M5TopologyExtractor}\\[-1pt]
+    {\scriptsize DemandMapper}\\[-1pt]
+    {\scriptsize $\to$ \textbf{TensorBundle}}
+};
+\node[font=\scriptsize\bfseries, text=green!50!black, above=0.1cm of pipe] {DATA / ETL};
+
+\node[modbox, draw=orange!60!black, fill=orange!6, below right=1.4cm and 1.0cm of cfg] (base) {
+    \textbf{\textsf{baseline\_solvers.py}}\\[2pt]
+    {\scriptsize CPUMonteCarlo (NumPy)}\\[-1pt]
+    {\scriptsize PyTorchMonteCarlo}\\[-1pt]
+    {\scriptsize (\texttt{torch.compile})}
+};
+\node[font=\scriptsize\bfseries, text=orange!60!black, above=0.1cm of base] {BASELINES};
+
+% --- Row 3: Triton (left) and Benchmark (right) ---
+\node[modbox, draw=red!60!black, fill=red!6, below=1.4cm of pipe] (triton) {
+    \textbf{\textsf{triton\_fused.py}} $\bigstar$\\[2pt]
+    {\scriptsize @triton.autotune}\\[-1pt]
+    {\scriptsize @triton.jit}\\[-1pt]
+    {\scriptsize \textbf{SRAM-fused kernel}}
+};
+\node[font=\scriptsize\bfseries, text=red!60!black, above=0.1cm of triton] {CORE CONTRIBUTION};
+
+\node[modbox, draw=purple!50!black, fill=purple!6, below=1.4cm of base] (bench) {
+    \textbf{\textsf{benchmark.py}}\\[2pt]
+    {\scriptsize check\_correctness()}\\[-1pt]
+    {\scriptsize print\_results\_table()}\\[-1pt]
+    {\scriptsize perf\_sweep()}
+};
+\node[font=\scriptsize\bfseries, text=purple!50!black, above=0.1cm of bench] {BENCHMARKING};
+
+% --- Arrows with labels ---
+\draw[-{Stealth[length=6pt]}, thick, blue!50!black] (cfg) -- node[left, font=\tiny, text=gray] {params} (pipe);
+\draw[-{Stealth[length=6pt]}, thick, blue!50!black] (cfg) -- node[right, font=\tiny, text=gray] {params} (base);
+
+\draw[-{Stealth[length=6pt]}, thick, green!40!black] (pipe) -- node[left, font=\tiny, text=gray] {TensorBundle} (triton);
+\draw[-{Stealth[length=6pt]}, thick, green!40!black] (pipe) -- node[above, font=\tiny, text=gray, sloped] {TensorBundle} (base);
+
+\draw[-{Stealth[length=6pt]}, thick, red!40!black] (triton) -- node[below, font=\tiny, text=gray, sloped] {SolverResult} (bench);
+\draw[-{Stealth[length=6pt]}, thick, orange!50!black] (base) -- node[right, font=\tiny, text=gray] {SolverResult} (bench);
+
+\end{tikzpicture}
+\caption{System architecture: module dependency graph. Arrows indicate data flow; \texttt{TensorBundle} is the universal data contract between the pipeline and all solvers.}
+\label{fig:sysarch}
+\end{figure}
+
+\section{Scope and Report Organisation}\label{sec:scope}
+
+This work focuses on the single-period newsvendor problem targeting NVIDIA GPUs (CUDA 7.0+). Multi-period models, dynamic pricing, and lead-time variability are beyond scope but discussed as future work in \Cref{ch:conclusions}. The report proceeds as follows: \Cref{ch:litreview}~(literature), \Cref{ch:method}~(data pipeline), \Cref{ch:model}~(solvers), \Cref{ch:extensions}~(extensions), \Cref{ch:results}~(results), \Cref{ch:conclusions}~(conclusions).

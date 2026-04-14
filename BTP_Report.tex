@@ -1,0 +1,247 @@
+% ============================================================================
+%  BTP Report — SRAM-Fused Triton Kernel for MC Inventory Optimisation
+%  IIT Kharagpur  |  Compact edition (target: 25-30 pages)
+% ============================================================================
+\documentclass[11pt, a4paper, oneside]{report}
+
+% --- Core packages ----------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\setstretch{1.3}
+
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage[numbers, sort&compress]{natbib}
+\usepackage{url}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{positioning, arrows.meta, calc, patterns, fit, shapes.geometric, decorations.pathreplacing}
+
+% --- Compact chapter/section titles -----------------------------------------
+\usepackage{titlesec}
+\titleformat{\chapter}[display]{\normalfont\Large\bfseries}{\chaptertitlename\ \thechapter}{8pt}{\LARGE}
+\titlespacing*{\chapter}{0pt}{-20pt}{12pt}
+\titlespacing*{\section}{0pt}{10pt}{4pt}
+\titlespacing*{\subsection}{0pt}{8pt}{3pt}
+\titlespacing*{\subsubsection}{0pt}{6pt}{2pt}
+
+% --- Compact captions -------------------------------------------------------
+\captionsetup{font=small, labelfont=bf, skip=4pt}
+
+% --- Compact lists ----------------------------------------------------------
+\setlist{nosep, leftmargin=1.5em}
+
+% --- Colours ----------------------------------------------------------------
+\definecolor{codeblue}{RGB}{0,102,204}
+\definecolor{codegray}{RGB}{100,100,100}
+\definecolor{codegreen}{RGB}{0,128,0}
+\definecolor{backcolour}{RGB}{248,248,248}
+\definecolor{iitkgpred}{RGB}{139,0,0}
+% Figure palette
+\definecolor{cpucol}{RGB}{120,144,168}
+\definecolor{ptcol}{RGB}{232,168,56}
+\definecolor{trcol}{RGB}{192,57,43}
+\definecolor{dmem}{RGB}{70,130,180}
+\definecolor{inputmem}{RGB}{100,180,220}
+\definecolor{outmem}{RGB}{180,220,140}
+
+% --- Hyperref ---------------------------------------------------------------
+\hypersetup{colorlinks=true, linkcolor=iitkgpred, citecolor=codeblue, urlcolor=codeblue}
+
+% --- Code listing style -----------------------------------------------------
+\lstset{
+    backgroundcolor=\color{backcolour}, basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{codeblue}\bfseries, commentstyle=\color{codegray}\itshape,
+    stringstyle=\color{codegreen}, breaklines=true, frame=single,
+    rulecolor=\color{codegray!30}, numbers=left, numberstyle=\tiny\color{codegray},
+    xleftmargin=2em, framexleftmargin=1.5em, captionpos=b, aboveskip=6pt, belowskip=4pt,
+}
+
+% --- Header/Footer ----------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\leftmark}
+\fancyhead[R]{\small BTP Report}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Graphics path ----------------------------------------------------------
+\graphicspath{{diagrams/}{report_figures/}}
+
+% --- Boxed figures globally -------------------------------------------------
+\usepackage{float}
+\floatstyle{boxed}
+\restylefloat{figure}
+
+% --- Custom commands --------------------------------------------------------
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\tflops}{\text{TFLOPS}}
+\newcommand{\blockm}{\texttt{BLOCK\_M}}
+\newcommand{\blockn}{\texttt{BLOCK\_N}}
+\newcommand{\blockk}{\texttt{BLOCK\_K}}
+
+% ============================================================================
+\begin{document}
+
+% --- Title page -------------------------------------------------------------
+\begin{titlepage}
+\centering
+
+\vspace*{0.5cm}
+
+{\fontsize{26}{42}\selectfont\bfseries SRAM-Fused Triton Kernels for Monte-Carlo Inventory Optimisation}
+
+\vspace{1.2cm}
+
+{\large\bfseries BTP PROJECT REPORT}
+
+\vspace{0.8cm}
+
+{\large Submitted by}\\[0.2cm]
+{\large\bfseries Abhijit Kumar}\\[0.15cm]
+{\large\bfseries B.Tech.\ in Industrial and Systems Engineering}\\[0.15cm]
+{\large\bfseries Indian Institute of Technology Kharagpur}
+
+\vspace{0.8cm}
+
+{\large Under the Supervision of}\\[0.2cm]
+{\large\bfseries Dr.\ ABHISHEK SHARMA}\\[0.15cm]
+{\large\bfseries Department of Industrial and Systems Engineering}\\[0.15cm]
+{\large\bfseries Indian Institute of Technology Kharagpur}
+
+\vspace{0.8cm}
+
+\includegraphics[width=3cm]{iitkgp_logo.png}
+
+\vspace{1.5cm}
+
+{\large\bfseries Department of Industrial \& Systems Engineering}\\[0.15cm]
+{\large\bfseries Indian Institute of Technology Kharagpur}
+
+\vspace{0.3cm}
+
+{\large\bfseries Spring 2025--26 Session}
+
+\vfill
+
+\end{titlepage}
+
+% --- Certificate from the Candidate ----------------------------------------
+\newpage
+\thispagestyle{empty}
+
+\begin{center}
+{\Large\bfseries\underline{CERTIFICATE FROM THE CANDIDATE}}
+\end{center}
+
+\vspace{1.5cm}
+
+\noindent I hereby certify that the BTP/MTP project report entitled, `\textbf{SRAM-Fused Triton Kernel for Monte-Carlo Inventory Optimisation}' and submitted is completely original and has not been submitted for award of any degree/internship anywhere.
+
+\vspace{4cm}
+
+\noindent Yours Sincerely,
+
+\vspace{1.5cm}
+
+\noindent\textbf{Name:} Abhijit Kumar\\[0.3cm]
+\textbf{Affiliation:} Indian Institute of Technology Kharagpur\\[0.3cm]
+\textbf{Degree Programme (with batch year):} B.\ Tech.\ in Industrial\\
+and Systems Engineering (2022 -- 2026)
+
+\vspace{2cm}
+
+\hfill\textbf{Sign.\ (with date)}
+
+% --- Certificate from the Supervisor ---------------------------------------
+\newpage
+\thispagestyle{empty}
+
+\begin{center}
+{\Large\bfseries\underline{CERTIFICATE FROM THE SUPERVISOR}}
+\end{center}
+
+\vspace{1.5cm}
+
+\noindent I hereby certify that the thesis/project report entitled, ``\textbf{SRAM-Fused Triton Kernel for Monte-Carlo Inventory Optimisation}'', which is being submitted by \textbf{Mr.\ Abhijit Kumar} for the award of \textbf{BTP} is completely original and has not been submitted for award of any degree/internship anywhere. The entire work was done under my supervision and guidance.
+
+\vspace{6cm}
+
+\noindent Yours Sincerely,\\
+Dr.\ Abhishek Sharma\\
+(Supervisor)
+
+% --- Front matter -----------------------------------------------------------
+\pagenumbering{roman}
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\input{sections/abstract}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\chapter*{List of Abbreviations}
+\addcontentsline{toc}{chapter}{List of Abbreviations}
+\input{sections/abbreviations}
+
+% --- Main matter ------------------------------------------------------------
+\pagenumbering{arabic}
+
+\chapter{Introduction}\label{ch:intro}
+\input{sections/ch1_introduction}
+
+\chapter{Literature Review}\label{ch:litreview}
+\input{sections/ch2_literature}
+
+\chapter{Methodology}\label{ch:method}
+\input{sections/ch3_methodology}
+
+\chapter{Solver Models}\label{ch:model}
+\input{sections/ch4_solvers}
+
+\chapter{Extensions}\label{ch:extensions}
+\input{sections/ch5_extensions}
+
+\chapter{Results and Discussion}\label{ch:results}
+\input{sections/ch6_results}
+
+\chapter{Conclusions and Future Work}\label{ch:conclusions}
+\input{sections/ch7_conclusions}
+
+% --- Back matter ------------------------------------------------------------
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+\chapter{Configuration Parameters}\label{app:config}
+\input{sections/appendix_config}
+
+\chapter{SRAM Budget Calculation}\label{app:sram}
+\input{sections/appendix_sram}
+
+\chapter{Project File Structure}\label{app:files}
+\input{sections/appendix_files}
+
+\end{document}

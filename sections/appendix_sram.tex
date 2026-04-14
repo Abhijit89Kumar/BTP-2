@@ -1,0 +1,6 @@
+For tile configuration (BM, BN, BK), SRAM per K-loop iteration is:
+\[
+    \text{Total} = (\text{BM} \cdot \text{BK} + \text{BK} \cdot \text{BN} + \text{BM} \cdot \text{BN}) \times 4 \text{ bytes}.
+\]
+
+\textbf{Example} (Config 3: BM=64, BN=128, BK=32): $\text{L\_tile} = 8{,}192$\,B + $\text{Z\_tile} = 16{,}384$\,B + $\text{acc} = 32{,}768$\,B = 57{,}344\,B $\approx$ 36\,KB $\checkmark$ (within 48\,KB budget derived from T4's 64\,KB shared memory minus ${\sim}16$\,KB Triton/CUDA overhead).

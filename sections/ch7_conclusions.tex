@@ -1,0 +1,20 @@
+\section{Summary of Contributions}
+
+\begin{enumerate}
+    \item \textbf{Memory-efficient kernel fusion for inventory optimisation.} A custom Triton kernel fuses matmul, newsvendor profit logic, and reduction into a single SRAM-resident pass, eliminating the 1.0\,GB intermediate $\mathbf{D}$ matrix from HBM---the first such application in inventory optimisation. This achieves a \textbf{49.4\% peak memory reduction} (2.024\,GB $\to$ 1.024\,GB) and ${\sim}$75\% HBM traffic reduction at full scale.
+    \item \textbf{Extension kernel speedups.} Extension kernels that fuse more work per matmul tile demonstrate clear computation gains: Grid Search achieves 1.3$\times$ speedup with 66\% memory reduction, and CVaR achieves 1.7$\times$ speedup with 90\% memory reduction---showing that the fusion advantage scales with per-tile work complexity.
+    \item \textbf{Realistic data pipeline.} Real M5 Kaggle dataset correlations (auto-downloaded via \texttt{kagglehub}) hybridised with domain-specific financial parameters for heavy-machinery dealerships, replacing synthetic fallbacks.
+    \item \textbf{Four optimisation extensions with actionable insights.} Grid search ($+5.3\%$ aggregate profit, 78\% of products should order below $\mu$), CVaR (generators carry 17.5$\times$ more tail risk), budget-constrained (Lagrangian bisection converges in 13 iterations), and substitution ($+10.3\%$ aggregate profit, all 2,048 products benefit).
+    \item \textbf{Honest architectural analysis.} The two-pass substitution kernel (0.4$\times$ speedup) delineates the boundary of SRAM fusion: multi-pass algorithms requiring HBM intermediates do not benefit from tile-level fusion---an important finding for practitioners.
+    \item \textbf{Correctness and portability.} Numerical agreement within FP32 tolerance across all three backends (max deviation $< 0.005$); autotuning across GPU architectures.
+\end{enumerate}
+
+\section{Limitations}
+
+The current system addresses single-period newsvendor only. The base kernel fixes $Q = \mu$; the grid search finds $Q^*$ over a discrete grid (continuous optimisation via differentiable simulation is future work). The base Triton kernel at the largest tested scale ($N{=}2048$ on T4) does not outperform \texttt{torch.compile} on wall time---PyTorch Inductor generates efficient Triton code for the matmul, which dominates at this scale. The Triton kernel requires NVIDIA CUDA GPUs. The M5 dataset requires Kaggle credentials for download.
+
+\section{Future Work}
+
+Key directions include: (i)~\textbf{differentiable simulation} via custom autograd for end-to-end $Q$ optimisation~\citep{paszke2019}; (ii)~\textbf{multi-period models} with carry-over inventory and lead times~\citep{zipkin2000}; (iii)~\textbf{mixed-precision} (FP16/BF16 tensor cores on Ampere/Hopper) to further reduce memory and improve throughput~\citep{micikevicius2018}; (iv)~\textbf{multi-GPU scaling} for $N > 10{,}000$ where the $\mathbf{D}$ matrix would exceed 40\,GB; (v)~\textbf{single-pass substitution} via approximate methods to avoid the HBM round-trip identified in \Cref{sec:ext-results}.
+
+Beyond these technical extensions, a deployment study with an actual dealership network would validate the simulation parameters and quantify profit improvements over heuristic ordering policies. The sub-second execution time on commodity GPU hardware enables embedding the solver within ERP systems for interactive ``what-if'' analysis---a significant advance over batch-mode overnight planning runs.

@@ -1,0 +1,42 @@
+% ============================================================================
+%  Appendix A — Project File Structure
+% ============================================================================
+
+\begin{lstlisting}[basicstyle=\ttfamily\small, frame=none, numbers=none, xleftmargin=0em]
+BTP-2/
+|-- config.py                        # Central configuration
+|-- data_pipeline.py                 # ETL: M5 -> correlations -> TensorBundle
+|-- baseline_solvers.py              # CPU-NumPy & PyTorch-Compile baselines
+|-- triton_fused_newsvendor.py       # Custom Triton kernel (core contribution)
+|-- benchmark.py                     # Benchmarking and correctness validation
+|-- generate_diagrams.py             # System/architecture diagram generation
+|-- generate_performance_plots.py    # Performance visualisation plots
+|-- BTP_Newsvendor_Full_Run.ipynb    # One-click Colab notebook
+|-- BTP_Report.tex                   # This report (LaTeX source)
+|-- references.bib                   # Bibliography database
+|-- ARCHITECTURE.md                  # Technical documentation
+|
+|-- extensions/
+|   |-- __init__.py
+|   |-- common.py                    # Shared result dataclasses
+|   |-- grid_search_kernel.py        # Triton kernel: Q* grid search
+|   |-- grid_search_solvers.py       # CPU/PyTorch/Triton grid search solvers
+|   |-- cvar_kernel.py               # Triton kernel: CVaR histogram
+|   |-- cvar_solvers.py              # CPU/PyTorch/Triton CVaR solvers
+|   |-- budget_solvers.py            # Lagrangian budget-constrained solvers
+|   |-- substitution_kernel.py       # Triton kernels: two-pass substitution
+|   |-- substitution_solvers.py      # CPU/PyTorch/Triton substitution solvers
+|
+|-- gradio_app/                      # Interactive web application
+|   |-- app.py                       # Main Gradio application entry point
+|   |-- state.py                     # Application state management
+|   |-- plotting.py                  # Interactive plotting utilities
+|   |-- tabs/
+|       |-- about_tab.py             # About page with mathematical details
+|       |-- setup_tab.py             # Configuration setup interface
+|       |-- solver_tab.py            # Solver execution interface
+|       |-- results_tab.py           # Results visualisation tab
+|       |-- product_tab.py           # Per-product analysis tab
+|
+|-- diagrams/                        # Generated PNG figures (10 files)
+\end{lstlisting}
